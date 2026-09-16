@@ -168,9 +168,9 @@ const TelaNotasEmpenho = (function () {
   async function preCarregar() {
     try {
       await Promise.all([
-        Api.chamar('listarUnidades', { somenteAtivas: true, pageSize: 100000 }, { cache: true }),
-        TelaListas.obterOpcoes('OSS'),
-        TelaListas.obterOpcoes('OBJETO')
+        Api.chamar('listarUnidades', { somenteAtivas: true, pageSize: 100000 }, { cache: true, silencioso: true }),
+        TelaListas.obterOpcoes('OSS', { silencioso: true }),
+        TelaListas.obterOpcoes('OBJETO', { silencioso: true })
       ]);
       const params = Object.assign({ page: 1, pageSize: tamanhoPagina }, filtrosPadrao_());
       await CacheAbas.comRevalidacao('notasEmpenho', params,

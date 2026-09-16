@@ -139,8 +139,13 @@ const TelaListas = (function () {
   }
 
   /** Usado por sof.js/recibos.js para popular os <select> de andamento/status. */
-  async function obterOpcoes(tipoLista) {
-    return Api.chamar('listarOpcoes', { tipo_lista: tipoLista }, { cache: true });
+  /**
+   * opcoes: repassado pro Api.chamar - quem chama em segundo plano (os
+   * preCarregar() das telas) passa { silencioso: true } pra não acender o
+   * spinner global bloqueante, que trava a tela que o usuário está olhando.
+   */
+  async function obterOpcoes(tipoLista, opcoes) {
+    return Api.chamar('listarOpcoes', { tipo_lista: tipoLista }, Object.assign({ cache: true }, opcoes));
   }
 
   return { render, obterOpcoes };

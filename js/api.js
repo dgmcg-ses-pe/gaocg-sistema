@@ -105,8 +105,16 @@ const Api = (function () {
     return resposta.json();
   }
 
-  async function requisitarComRetry_(corpo) {
-    if (!ACOES_REPETIVEIS_.has(corpo.action)) return requisitar_(corpo);
+  /**
+   * `silencioso` aqui significa "ninguém está esperando por isto na tela"
+   * (pré-carga de aba, revalidação em segundo plano). Essas NÃO repetem: se
+   * falharem, a tela recarrega do zero quando o usuário realmente abrir a aba
+   * - aí sim em primeiro plano, com retry. Repetir trabalho especulativo só
+   * multiplicaria requisição justamente quando o servidor já está com
+   * dificuldade, que é quando a pré-carga menos importa.
+   */
+  async function requisitarComRetry_(corpo, silencioso) {
+    if (silencioso || !ACOES_REPETIVEIS_.has(corpo.action)) return requisitar_(corpo);
 
     for (let tentativa = 0; ; tentativa++) {
       try {
@@ -155,9 +163,9 @@ const Api = (function () {
 
     if (!silencioso) UI.mostrarCarregando();
     try {
-      let json = await requisitarComRetry_(corpo);
+      let json = await requisitarComRetry_(corpo, silencioso);
       if (!json.ok && json.error === ERRO_ACTION_AUSENTE_) {
-        json = await requisitarComRetry_(corpo);
+        json = await requisitarComRetry_(corpo, silencioso);
       }
 
       if (!json.ok) {

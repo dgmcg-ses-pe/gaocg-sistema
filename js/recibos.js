@@ -326,10 +326,10 @@ const TelaRecibos = (function () {
   async function preCarregar() {
     try {
       await Promise.all([
-        Api.chamar('listarUnidades', { somenteAtivas: true, pageSize: 100000 }, { cache: true }),
-        carregarOpcoesStatus_(),
-        TelaListas.obterOpcoes('OSS'),
-        TelaListas.obterOpcoes('OBJETO')
+        Api.chamar('listarUnidades', { somenteAtivas: true, pageSize: 100000 }, { cache: true, silencioso: true }),
+        carregarOpcoesStatus_({ silencioso: true }),
+        TelaListas.obterOpcoes('OSS', { silencioso: true }),
+        TelaListas.obterOpcoes('OBJETO', { silencioso: true })
       ]);
       const params = Object.assign({ page: 1, pageSize: TAMANHO_PAGINA_TODOS_ }, filtrosPadrao_());
       await CacheAbas.comRevalidacao('recibos', params,
@@ -802,8 +802,8 @@ const TelaRecibos = (function () {
     return `<option value="">Selecione...</option>` + unidades.map(u => `<option value="${u.id}" ${selecionadaId === u.id ? 'selected' : ''}>${UI.escaparHtml(u.nome)}</option>`).join('');
   }
 
-  async function carregarOpcoesStatus_() {
-    try { return await TelaListas.obterOpcoes('STATUS_RECIBO'); } catch (e) { return []; }
+  async function carregarOpcoesStatus_(opcoes) {
+    try { return await TelaListas.obterOpcoes('STATUS_RECIBO', opcoes); } catch (e) { return []; }
   }
 
   function opcoesStatusHtml_(opcoes, statusAtual) {

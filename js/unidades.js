@@ -143,7 +143,7 @@ const TelaUnidades = (function () {
   /** Pré-carrega os dados desta tela em segundo plano - ver mesma função em js/sof.js. */
   async function preCarregar() {
     try {
-      await TelaListas.obterOpcoes('OSS');
+      await TelaListas.obterOpcoes('OSS', { silencioso: true });
       const params = Object.assign({ page: 1, pageSize: tamanhoPagina }, filtrosPadrao_());
       await CacheAbas.comRevalidacao('unidades', params,
         (opcoes) => Api.chamar('listarUnidades', params, Object.assign({ silencioso: true }, opcoes)),
