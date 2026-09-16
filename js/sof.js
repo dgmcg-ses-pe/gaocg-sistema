@@ -1786,7 +1786,7 @@ const TelaSof = (function () {
     const linhasOriginais = naoReforco.map(n => `
       <tr data-id="${n.id}">
         <td>${n.tipo}</td><td>${UI.escaparHtml(n.numero_ne || '-')}</td><td>${UI.escaparHtml(n.fonte || '-')}</td>
-        <td>${UI.escaparHtml(n.objeto || '-')}</td><td>${UI.formatarMoeda(n.valor)}</td><td>${UI.escaparHtml(n.periodo)}</td>
+        <td>${UI.escaparHtml(n.objeto || '-')}</td><td>${UI.formatarMoeda(n.valor)}</td><td>${UI.escaparHtml(n.periodo || '-')}</td>
         <td>${n.arquivo_url ? `<a href="${UI.escaparHtml(n.arquivo_url)}" target="_blank" rel="noopener" class="botao">Ver arquivo</a>` : '-'}</td>
         <td><button type="button" class="botao-icone excluir" data-acao="excluir-ne" data-id="${n.id}" title="Excluir">${ICONE_LIXEIRA}</button></td>
       </tr>`);
