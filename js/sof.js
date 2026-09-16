@@ -1818,6 +1818,11 @@ const TelaSof = (function () {
     // fica órfão se não descartado agora (sessão 2026-08-12).
     descartarArquivoNeNaoSalvo_();
     const alvo = document.getElementById('secaoNotasEmpenho');
+    // Resposta atrasada de um modal que já foi fechado/trocado: sem esta
+    // guarda o script inteiro morria com "Cannot set properties of null"
+    // (visto no console do usuário, sessão 2026-09-16, quando a chamada
+    // demorou ~20s por cold start do Apps Script e ele já tinha saído da tela).
+    if (!alvo) return;
     alvo.innerHTML = `
       <h4 style="margin:0 0 8px">Notas de Empenho (total: ${UI.formatarMoeda(total)})</h4>
       <table class="tabela">

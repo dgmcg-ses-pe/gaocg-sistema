@@ -1189,10 +1189,23 @@ const App = (function () {
    * navegação manual pra aquela aba volta a carregar do zero normalmente,
    * exatamente como antes desta função existir.
    */
-  function preCarregarAbas_() {
-    [TelaSof, TelaNotasEmpenho, TelaRecibos, TelaUnidades].forEach(tela => {
-      Promise.resolve().then(() => tela.preCarregar()).catch(() => {});
-    });
+  async function preCarregarAbas_() {
+    // Aquece a instância do Apps Script com UMA chamada barata antes de
+    // soltar a rajada (medido em 2026-09-16, pedido do usuário: "às vezes
+    // quando vou logar o sistema fica muito lento... e carrega com
+    // informações incompletas"): com o script frio, a 1ª requisição leva
+    // ~20-25s e as que chegam junto com ela morrem em HTTP 404; com ele
+    // quente, 16 paralelas voltam em ~1,5s. Pagar o cold start uma vez, com
+    // uma requisição só, evita perder a rajada inteira.
+    try { await Api.chamar('ping', {}, { silencioso: true }); } catch (e) { /* segue mesmo assim */ }
+
+    // Uma aba por vez, não as 4 de uma vez: cada preCarregar() já dispara 3-4
+    // chamadas em paralelo internamente, e isso aqui é trabalho de segundo
+    // plano - não precisa ser instantâneo, precisa não atrapalhar a tela que
+    // o usuário está olhando.
+    for (const tela of [TelaSof, TelaNotasEmpenho, TelaRecibos, TelaUnidades]) {
+      try { await tela.preCarregar(); } catch (e) { /* best-effort, ver comentário acima */ }
+    }
   }
 
   /**
