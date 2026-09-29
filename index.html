@@ -140,7 +140,7 @@
   <!--
     TROCA DE SENHA OBRIGATÓRIA (sessão 2026-08-26, pedido do usuário) -
     aparece no primeiro login de todo usuário novo, e de novo sempre que um
-    Gerente/Administrador redefine a senha dele (volta pro padrão "123456").
+    Gerente/Administrador redefine a senha dele (gera uma senha temporária).
     Fixo aqui (não passa por UI.abrirModal) DE PROPÓSITO: sem botão de
     fechar/X e sem listener de "clicar fora" - só some depois que
     trocarSenhaPrimeiroLogin salva com sucesso (ver verificarTrocaSenhaObrigatoria_,
@@ -151,7 +151,7 @@
       <div class="modal-cabecalho"><h3 class="modal-titulo">Troque sua senha</h3></div>
       <div class="modal-corpo">
         <p class="ajuda">Este é o seu primeiro acesso (ou sua senha foi redefinida). Por segurança, defina uma senha nova antes de continuar.</p>
-        <p class="ajuda">Essa senha é <strong>pessoal - só você tem acesso a ela</strong>. Se esquecer, peça a um Gerente ou ao Administrador do Aplicativo para redefini-la; ao fazer isso, sua senha volta para o padrão "123456" e este mesmo aviso aparecerá de novo no seu próximo login.</p>
+        <p class="ajuda">Essa senha é <strong>pessoal - só você tem acesso a ela</strong>. Se esquecer, peça a um Gerente ou ao Administrador do Aplicativo para redefini-la; ao fazer isso, será gerada uma senha temporária nova (informada a você por eles) e este mesmo aviso aparecerá de novo no seu próximo login.</p>
         <form id="formTrocaSenhaObrigatoria" novalidate>
           <div class="campo"><label for="primeiroLoginSenhaNova">Nova senha *</label><input id="primeiroLoginSenhaNova" type="password" autocomplete="new-password" minlength="6" required /></div>
           <div class="campo"><label for="primeiroLoginSenhaConfirmacao">Confirmar nova senha *</label><input id="primeiroLoginSenhaConfirmacao" type="password" autocomplete="new-password" minlength="6" required /></div>

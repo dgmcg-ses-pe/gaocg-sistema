@@ -80,7 +80,7 @@ const TelaUsuarios = (function () {
    * perfil (Gerente ou Analista - conceder Administrador continua exclusivo
    * da edição, ver perfilValidado_ em backend/Usuarios.gs). Login e senha
    * não são mais digitados - o backend gera "primeironome.ultimonome" e
-   * sempre começa com a senha padrão (ver criarUsuario, mesmo arquivo),
+   * uma senha temporária aleatória (ver criarUsuario, mesmo arquivo),
    * exibidos pro Gerente/Administrador logo depois de salvar
    * (mostrarCredenciaisGeradas_) pra ele poder repassar pro novo usuário.
    *
@@ -188,22 +188,31 @@ const TelaUsuarios = (function () {
    */
   function mostrarCredenciaisGeradas_(usuario) {
     const corpo = `
-      <p class="ajuda">Repasse estas credenciais ao novo usuário. No primeiro login ele será obrigado a trocar a senha.</p>
+      <p class="ajuda"><strong>Anote agora:</strong> esta senha temporária é mostrada uma única vez e não pode ser recuperada depois. Repasse estas credenciais ao usuário por um canal seguro. No primeiro login ele será obrigado a trocá-la.</p>
       <div class="campo"><label>Login</label><input value="${UI.escaparHtml(usuario.login)}" disabled /></div>
-      <div class="campo"><label>Senha padrão</label><input value="123456" disabled /></div>`;
+      <div class="campo"><label>Senha temporária</label><input value="${UI.escaparHtml(usuario.senha_temporaria)}" disabled /></div>`;
     UI.abrirModal('Usuário criado', corpo, `<button class="botao primario" id="btnFecharCredenciais">OK</button>`, { pequeno: true });
     document.getElementById('btnFecharCredenciais').addEventListener('click', UI.fecharModal);
   }
 
+  /** Igual a mostrarCredenciaisGeradas_, mas para o reset de senha (só a senha muda, o login continua o mesmo). */
+  function mostrarSenhaRedefinida_(nome, senhaTemporaria) {
+    const corpo = `
+      <p class="ajuda"><strong>Anote agora:</strong> esta senha temporária é mostrada uma única vez e não pode ser recuperada depois. Repasse-a a ${UI.escaparHtml(nome)} por um canal seguro. No próximo login será obrigatório trocá-la.</p>
+      <div class="campo"><label>Senha temporária</label><input value="${UI.escaparHtml(senhaTemporaria)}" disabled /></div>`;
+    UI.abrirModal('Senha redefinida', corpo, `<button class="botao primario" id="btnFecharSenhaRedefinida">OK</button>`, { pequeno: true });
+    document.getElementById('btnFecharSenhaRedefinida').addEventListener('click', UI.fecharModal);
+  }
+
   /**
    * "Redefinir senha" (sessão 2026-08-26) não pede mais uma senha nova
-   * digitada pelo Gerente/Administrador - sempre volta pro padrão "123456" e
-   * força a troca no próximo login (ver redefinirSenha, backend/Usuarios.gs).
+   * digitada pelo Gerente/Administrador - gera uma senha temporária aleatória
+   * e força a troca no próximo login (ver redefinirSenha, backend/Usuarios.gs).
    * Confirmação grande e em destaque, mesmo padrão de confirmarExclusao
    * (js/unidades.js) - é uma ação que derruba a senha atual do usuário.
    */
   function confirmarRedefinirSenha_(usuario) {
-    const corpo = `<p class="aviso-exclusao">REDEFINIR A SENHA DE "${UI.escaparHtml(usuario.nome).toUpperCase()}" PARA O PADRÃO "123456"? NO PRÓXIMO LOGIN, ELE(A) SERÁ OBRIGADO(A) A TROCÁ-LA.</p>`;
+    const corpo = `<p class="aviso-exclusao">REDEFINIR A SENHA DE "${UI.escaparHtml(usuario.nome).toUpperCase()}"? UMA NOVA SENHA TEMPORÁRIA SERÁ GERADA E MOSTRADA UMA ÚNICA VEZ. NO PRÓXIMO LOGIN, ELE(A) SERÁ OBRIGADO(A) A TROCÁ-LA.</p>`;
     UI.abrirModal('Redefinir senha', corpo,
       `<button class="botao" id="btnCancelarRedefinirSenha">Cancelar</button><button class="botao perigo" id="btnConfirmarRedefinirSenha">Redefinir</button>`,
       { pequeno: true });
@@ -211,10 +220,10 @@ const TelaUsuarios = (function () {
     document.getElementById('btnCancelarRedefinirSenha').addEventListener('click', UI.fecharModal);
     document.getElementById('btnConfirmarRedefinirSenha').addEventListener('click', async () => {
       try {
-        await Api.chamar('redefinirSenha', { id: usuario.id });
+        const resposta = await Api.chamar('redefinirSenha', { id: usuario.id });
         CacheAbas.invalidar('usuarios');
-        UI.toast('Senha redefinida para o padrão "123456".', 'sucesso');
         UI.fecharModal();
+        mostrarSenhaRedefinida_(usuario.nome, resposta.senha_temporaria);
       } catch (err) {
         UI.toast(err.message, 'erro');
       }
