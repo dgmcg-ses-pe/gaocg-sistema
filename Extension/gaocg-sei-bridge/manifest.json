@@ -3,7 +3,7 @@
   "name": "GAOCG SEI Bridge",
   "short_name": "GAOCG-SEI",
   "description": "Envia dados criados no app GAOCG (SOF, Notas de Empenho, Recibos) diretamente para um processo aberto no SEI.",
-  "version": "0.47.0",
+  "version": "0.48.0",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwIdwNGV7h9a8eQgpKTAl6Bxiuz4wA75HXIJFKK8eb/3YjZbf99ngJq+WasaXt6iGFS6x8phScrFhSqiJjOkBewFpx7Fubw4Qv4TYfSqYc6LZxwQLQuSGMlFngwxwsQo9iptq7Bu8cKDYVA5WUJJDqdSQOP1PaHyLgxwE1dbcbUYFtySvIfP2oMY2dEhT1gwG/SA0WsCofsQKtU8QFUKuA9tkLtH7oQJu63zw3+B7GS4hSIeecnrempotEfPdQX3M3prMb0jZhEBNJ3V/Y+SPY1XeJg8QzIJFdOfcU/lIJgzRUJg9y0m6cm8k+AB8XIJIsbfClVvxhav050k+q+hN5wIDAQAB",
   "icons": {
     "16": "icons/icon-16.png",

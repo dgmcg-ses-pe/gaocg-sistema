@@ -1051,6 +1051,74 @@ function conteudoConfere_(html) {
   return atual >= Math.floor(html.length * 0.5);
 }
 
+/**
+ * Sanitiza o HTML do documento antes de injetá-lo na página do SEI (defesa em
+ * profundidade, 2026-09-29). O HTML vem do app GAOCG - origem confiável pelo
+ * externally_connectable do manifest, e o app já escapa os campos. Mas esta é a
+ * fronteira onde conteúdo externo entra numa página de TERCEIROS (sei.pe.gov.br):
+ * se o app fosse comprometido (ex.: XSS num campo de texto livre), sem isto o
+ * HTML malicioso seria injetado no SEI via innerHTML/setData e poderia executar
+ * script na origem do SEI. Uma allowlist estrita deixa passar só as tags e
+ * atributos que o documento realmente usa (parágrafos, tabelas, formatação),
+ * removendo script, handlers de evento (on*), iframe, img e afins. As classes do
+ * app são descartadas de propósito: os estilos já viajam inline
+ * (prepararHtmlParaEditor_, sei-bridge.js), então o visual do documento é mantido.
+ */
+var TAGS_PERMITIDAS_DOC_ = {
+  P: 1, BR: 1, STRONG: 1, B: 1, EM: 1, I: 1, U: 1, S: 1,
+  H1: 1, H2: 1, H3: 1, H4: 1, DIV: 1, SPAN: 1,
+  TABLE: 1, THEAD: 1, TBODY: 1, TFOOT: 1, TR: 1, TH: 1, TD: 1,
+  UL: 1, OL: 1, LI: 1
+};
+var ATRIBUTOS_PERMITIDOS_DOC_ = {
+  style: 1, colspan: 1, rowspan: 1, align: 1, valign: 1,
+  width: 1, border: 1, cellpadding: 1, cellspacing: 1
+};
+var TAGS_REMOVER_COM_CONTEUDO_ = [
+  "script", "style", "iframe", "object", "embed", "link", "meta", "base",
+  "form", "input", "button", "textarea", "select", "img", "svg", "math",
+  "video", "audio", "source", "noscript", "template"
+];
+
+function estiloSeguro_(valor) {
+  // Descarta o style inteiro se contiver vetores conhecidos (url(), expression, javascript:).
+  return /url\s*\(|expression\s*\(|javascript:/i.test(valor) ? "" : valor;
+}
+
+function sanitizarHtmlDocumento_(html) {
+  var doc = new DOMParser().parseFromString(String(html || ""), "text/html");
+  var corpo = doc.body;
+  if (!corpo) return "";
+
+  // 1. Remove por completo (com o conteúdo) as tags perigosas.
+  corpo.querySelectorAll(TAGS_REMOVER_COM_CONTEUDO_.join(",")).forEach(function (el) { el.remove(); });
+
+  // 2. De trás pra frente (descendentes antes dos ancestrais): tag fora da
+  //    allowlist é desembrulhada (mantém o texto), atributo fora da allowlist
+  //    (inclui todo on*) é removido, e o style passa pelo filtro acima.
+  var elementos = corpo.querySelectorAll("*");
+  for (var i = elementos.length - 1; i >= 0; i--) {
+    var el = elementos[i];
+    if (!TAGS_PERMITIDAS_DOC_[el.tagName]) {
+      while (el.firstChild) el.parentNode.insertBefore(el.firstChild, el);
+      el.remove();
+      continue;
+    }
+    var attrs = Array.prototype.slice.call(el.attributes);
+    for (var k = 0; k < attrs.length; k++) {
+      var nome = attrs[k].name.toLowerCase();
+      if (!ATRIBUTOS_PERMITIDOS_DOC_[nome]) {
+        el.removeAttribute(attrs[k].name);
+      } else if (nome === "style") {
+        var limpo = estiloSeguro_(attrs[k].value);
+        if (limpo) el.setAttribute("style", limpo); else el.removeAttribute("style");
+      }
+    }
+  }
+
+  return corpo.innerHTML;
+}
+
 async function aplicarConteudo_(corpoInicial, pendente) {
   // 1. Deixa o modelo do SEI terminar de carregar antes de qualquer coisa.
   await aguardarEditorEstabilizar_(1500, 20000);
@@ -1062,6 +1130,10 @@ async function aplicarConteudo_(corpoInicial, pendente) {
   if (numeroSei && pendente.marcadorNumero && pendente.marcadorNumero !== numeroSei) {
     html = html.split(pendente.marcadorNumero).join(numeroSei);
   }
+  // Sanitiza ANTES de qualquer injeção (setData ou innerHTML) - ver
+  // sanitizarHtmlDocumento_. Este é o único ponto por onde o HTML do documento
+  // chega ao editor do SEI, então basta filtrar aqui.
+  html = sanitizarHtmlDocumento_(html);
   // Guarda pro app poder buscar depois (sessão 2026-08-14) - não bloqueia o
   // resto do fluxo se falhar.
   if (numeroSei) guardarNumeroSofCapturado_(pendente.numeroProcesso, numeroSei).catch(() => {});
