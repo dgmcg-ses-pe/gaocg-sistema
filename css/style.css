@@ -468,6 +468,31 @@ table.tabela tbody tr.linha-sem-processo:hover { background: #fef3c7; }
 .botao-limpar-filtros { background: var(--vermelho-claro); color: var(--vermelho); }
 .botao-limpar-filtros:hover { filter: brightness(0.96); }
 
+/* ===== Cabeçalho de tela com ações + chips de "Filtros ativos" (sessão 2026-09-30) =====
+   SOF/Notas de Empenho/Recibos: as ações (Novo, Relatório, Selecionar para
+   excluir) saíram da barra de filtros e foram pro lado do título; os "x" de
+   cada filtro viraram chips removíveis logo abaixo da barra. */
+.cabecalho-tela { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; margin-bottom: 16px; }
+.cabecalho-tela h2.titulo-tela { margin: 0; }
+.acoes-tela { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.barra-filtros .campo.campo-busca-livre { flex: 1 1 280px; min-width: 240px; }
+.barra-filtros .campo-checkbox-filtro { min-width: 0; min-height: 38px; }
+.filtros-ativos { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: -4px 0 14px; font-size: 12.5px; }
+.filtros-ativos-rotulo { color: var(--cinza-500); margin-right: 2px; }
+.chip-filtro { display: inline-flex; align-items: center; gap: 2px; max-width: 340px; padding: 3px 3px 3px 10px; border-radius: 999px; background: var(--azul-claro); color: var(--azul-escuro); }
+.chip-filtro-texto { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip-filtro-x { flex-shrink: 0; width: 20px; height: 20px; padding: 0; border: none; border-radius: 50%; background: transparent; color: inherit; font-size: 15px; line-height: 1; cursor: pointer; }
+.chip-filtro-x:hover { background: rgba(127,127,127,.22); }
+.chip-filtro-limpar { border: none; background: transparent; padding: 3px 6px; color: var(--vermelho); font: inherit; text-decoration: underline; cursor: pointer; }
+/* Lista recarregando depois de mexer num filtro: esmaece o conteúdo atual e
+   mostra "Atualizando…", sem o spinner global que travava a tela inteira. */
+.lista-atualizando { position: relative; min-height: 64px; }
+.lista-atualizando > * { opacity: .45; pointer-events: none; transition: opacity .15s ease; }
+.lista-atualizando::after {
+  content: 'Atualizando…'; position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 5;
+  padding: 4px 14px; border-radius: 999px; background: var(--azul); color: #fff; font-size: 12px; font-weight: 600; box-shadow: var(--sombra);
+}
+
 .aviso-divergencia { color: var(--amarelo); font-size: 12px; margin-top: 2px; }
 .estado-vazio { text-align: center; color: var(--cinza-500); padding: 40px 0; }
 

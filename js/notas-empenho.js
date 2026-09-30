@@ -51,51 +51,36 @@ const TelaNotasEmpenho = (function () {
     ]);
     unidades = unidadesCarregadas.items;
     const tiposUnidade = Array.from(new Set(unidades.map(u => u.tipo).filter(Boolean))).sort();
+    // Mesmo layout de barra de Recibos/SOF (sessão 2026-09-30) - ver
+    // comentário em render() de js/recibos.js.
     document.getElementById('conteudo').innerHTML = `
-      <h2 class="titulo-tela">Notas de Empenho</h2>
+      <div class="cabecalho-tela">
+        <h2 class="titulo-tela">Notas de Empenho</h2>
+        <div class="acoes-tela">
+          <button class="botao" id="btnGerarRelatorioNe">Gerar relatório</button>
+          <button class="botao" id="btnModoSelecaoLoteNe" title="Marcar várias notas de empenho para excluir de uma vez">Selecionar para excluir</button>
+          <button class="botao primario" id="btnNovaNe">+ Nova Nota de Empenho</button>
+        </div>
+      </div>
       <div class="painel">
         <p class="ajuda">Cada card agrupa a Nota de Empenho original e seus reforços pelo número. O valor atual já desconta o que foi liquidado nos Recibos vinculados a essa NE.</p>
         <div class="barra-filtros">
-          <div class="campo campo-tamanho-pagina"><label>Itens por página</label>
-            <select id="neTamanhoPaginaTopo">${UI.opcoesTamanhoPaginaHtml(tamanhoPagina === TAMANHO_PAGINA_TODOS_ ? 'todos' : tamanhoPagina)}</select>
+          <div class="campo campo-busca-livre"><label for="neBusca">Busca livre</label>
+            <input type="text" id="neBusca" placeholder="Nº da NE, unidade, nº do processo SEI, valor..." />
           </div>
-          <div class="campo campo-busca-livre"><label>Busca livre</label>
-            <input type="text" id="neBusca" placeholder="número, SEI, valor..." /><button type="button" class="busca-livre-x" data-alvo="neBusca" title="Limpar busca livre">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">Unidade</label>
-            <div id="neFiltroUnidade"></div><button type="button" class="filtro-multiplo-x" data-alvo="neFiltroUnidade" title="Limpar filtro de Unidade">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">OSS</label>
-            <div id="neFiltroOss"></div><button type="button" class="filtro-multiplo-x" data-alvo="neFiltroOss" title="Limpar filtro de OSS">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">Objeto</label>
-            <div id="neFiltroObjeto"></div><button type="button" class="filtro-multiplo-x" data-alvo="neFiltroObjeto" title="Limpar filtro de Objeto">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">Tipo de unidade</label>
-            <div id="neFiltroTipoUnidade"></div><button type="button" class="filtro-multiplo-x" data-alvo="neFiltroTipoUnidade" title="Limpar filtro de Tipo de unidade">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">DEA</label>
-            <div id="neFiltroDea"></div><button type="button" class="filtro-multiplo-x" data-alvo="neFiltroDea" title="Limpar filtro de DEA">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">Fonte</label>
-            <div id="neFiltroFonte"></div><button type="button" class="filtro-multiplo-x" data-alvo="neFiltroFonte" title="Limpar filtro de Fonte">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">Ano</label>
-            <div id="neFiltroAno"></div><button type="button" class="filtro-multiplo-x" data-alvo="neFiltroAno" title="Limpar filtro de Ano">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">Competência</label>
-            <div id="neFiltroCompetencia"></div><button type="button" class="filtro-multiplo-x" data-alvo="neFiltroCompetencia" title="Limpar filtro de Competência">&times;</button>
-          </div>
+          <div class="campo campo-filtro-multiplo"><label>Competência</label><div id="neFiltroCompetencia"></div></div>
+          <div class="campo campo-filtro-multiplo"><label>Ano</label><div id="neFiltroAno"></div></div>
+          <div class="campo campo-filtro-multiplo"><label>Unidade</label><div id="neFiltroUnidade"></div></div>
+          <div class="campo campo-filtro-multiplo"><label>OSS</label><div id="neFiltroOss"></div></div>
+          <div class="campo campo-filtro-multiplo"><label>Tipo de unidade</label><div id="neFiltroTipoUnidade"></div></div>
+          <div class="campo campo-filtro-multiplo"><label>Objeto</label><div id="neFiltroObjeto"></div></div>
+          <div class="campo campo-filtro-multiplo"><label>Fonte</label><div id="neFiltroFonte"></div></div>
+          <div class="campo campo-filtro-multiplo"><label>DEA</label><div id="neFiltroDea"></div></div>
           <div class="campo campo-checkbox-filtro">
             <label class="rotulo-checkbox"><input type="checkbox" id="neFiltroSaldoBaixo" /> Somente saldo abaixo da parcela</label>
           </div>
-          <button class="botao" id="btnFiltrarNe">Filtrar</button>
-          <button class="botao botao-limpar-filtros" id="btnLimparFiltrosNe">Limpar filtros</button>
-          <button class="botao" id="btnGerarRelatorioNe">Gerar Relatório</button>
-          <button class="botao" id="btnModoSelecaoLoteNe">Apagar cards</button>
-          <span style="flex:1"></span>
-          <button class="botao primario" id="btnNovaNe">+ Nova Nota de Empenho</button>
         </div>
+        <div class="filtros-ativos oculto" id="neFiltrosAtivos"></div>
         <div class="barra-selecao-lote oculto" id="barraSelecaoLoteNe">
           <label class="rotulo-checkbox"><input type="checkbox" id="chkSelecionarTodosNe" /> Selecionar todos</label>
           <span id="contagemSelecaoLoteNe">0 selecionado(s)</span>
@@ -105,8 +90,7 @@ const TelaNotasEmpenho = (function () {
         <div id="listaNe"></div>
         <div class="paginacao" id="paginacaoNe"></div>
       </div>`;
-    document.getElementById('btnFiltrarNe').addEventListener('click', () => { if (filtrosMudaram_()) { paginaAtual = 1; carregar(); } });
-    document.getElementById('neBusca').addEventListener('keydown', e => { if (e.key === 'Enter' && filtrosMudaram_()) { paginaAtual = 1; carregar(); } });
+    UI.ligarBuscaAutomatica('neBusca', aplicarFiltros_);
     document.getElementById('btnNovaNe').addEventListener('click', abrirModalNovaNe);
     document.getElementById('btnGerarRelatorioNe').addEventListener('click', abrirGerarRelatorio);
     document.getElementById('btnModoSelecaoLoteNe').addEventListener('click', () => alternarModoSelecaoLote_());
@@ -117,27 +101,44 @@ const TelaNotasEmpenho = (function () {
       atualizarBarraSelecaoLote_();
       renderCards();
     });
-    // Seletor "Itens por página" duplicado no topo - ver mesma explicação em js/sof.js.
-    document.getElementById('neTamanhoPaginaTopo').addEventListener('change', function () { mudarTamanhoPagina_(this.value); });
     // Opções INICIAIS - a partir da primeira carga elas vêm das facetas do
     // backend (ver FACETAS_NE_/aplicarResposta_). Substitui o estreitamento
     // antigo, que valia só para Unidade/Tipo/OSS.
-    UI.criarFiltroMultiplo('neFiltroUnidade', unidades.map(u => ({ valor: u.id, rotulo: u.nome })));
-    UI.criarFiltroMultiplo('neFiltroOss', opcoesOss.map(o => o.valor));
-    UI.criarFiltroMultiplo('neFiltroObjeto', opcoesObjeto.map(o => o.valor));
-    UI.criarFiltroMultiplo('neFiltroTipoUnidade', tiposUnidade);
-    UI.criarFiltroMultiplo('neFiltroDea', ['SIM', 'NÃO']);
-    UI.criarFiltroMultiplo('neFiltroFonte', OPCOES_FONTE);
-    UI.criarFiltroMultiplo('neFiltroAno', UI.listaAnos());
-    UI.criarFiltroMultiplo('neFiltroCompetencia', UI.listaCompetencias());
-    document.getElementById('neFiltroSaldoBaixo').addEventListener('change', () => {
-      if (filtrosMudaram_()) { paginaAtual = 1; carregar(); }
-    });
+    UI.criarFiltroMultiplo('neFiltroUnidade', unidades.map(u => ({ valor: u.id, rotulo: u.nome })), null, aplicarFiltros_);
+    UI.criarFiltroMultiplo('neFiltroOss', opcoesOss.map(o => o.valor), null, aplicarFiltros_);
+    UI.criarFiltroMultiplo('neFiltroObjeto', opcoesObjeto.map(o => o.valor), null, aplicarFiltros_);
+    UI.criarFiltroMultiplo('neFiltroTipoUnidade', tiposUnidade, null, aplicarFiltros_);
+    UI.criarFiltroMultiplo('neFiltroDea', ['SIM', 'NÃO'], null, aplicarFiltros_);
+    UI.criarFiltroMultiplo('neFiltroFonte', OPCOES_FONTE, null, aplicarFiltros_);
+    UI.criarFiltroMultiplo('neFiltroAno', UI.listaAnos(), null, aplicarFiltros_);
+    UI.criarFiltroMultiplo('neFiltroCompetencia', UI.listaCompetencias(), null, aplicarFiltros_);
+    document.getElementById('neFiltroSaldoBaixo').addEventListener('change', aplicarFiltros_);
     if (opts && opts.saldoBaixo) document.getElementById('neFiltroSaldoBaixo').checked = true;
-    UI.ligarLimpezaFiltros('.barra-filtros', 'btnLimparFiltrosNe', () => {
-      if (filtrosMudaram_()) { paginaAtual = 1; carregar(); }
-    }, aoLimparFiltroIndividual_);
     await carregar();
+  }
+
+  /** Aplica os filtros da barra (ao fechar um dropdown, parar de digitar na busca, marcar o saldo baixo ou remover um chip). */
+  function aplicarFiltros_() {
+    if (!filtrosMudaram_()) { renderChipsFiltros_(); return; }
+    paginaAtual = 1;
+    carregar().catch(err => UI.toast(err.message, 'erro'));
+  }
+
+  const CHIPS_NE_ = [
+    { id: 'neBusca', rotulo: 'Busca', tipo: 'texto' },
+    { id: 'neFiltroCompetencia', rotulo: 'Competência', tipo: 'multiplo' },
+    { id: 'neFiltroAno', rotulo: 'Ano', tipo: 'multiplo' },
+    { id: 'neFiltroUnidade', rotulo: 'Unidade', tipo: 'multiplo' },
+    { id: 'neFiltroOss', rotulo: 'OSS', tipo: 'multiplo' },
+    { id: 'neFiltroTipoUnidade', rotulo: 'Tipo de unidade', tipo: 'multiplo' },
+    { id: 'neFiltroObjeto', rotulo: 'Objeto', tipo: 'multiplo' },
+    { id: 'neFiltroFonte', rotulo: 'Fonte', tipo: 'multiplo' },
+    { id: 'neFiltroDea', rotulo: 'DEA', tipo: 'multiplo' },
+    { id: 'neFiltroSaldoBaixo', rotulo: 'Saldo abaixo da parcela', tipo: 'checkbox' }
+  ];
+
+  function renderChipsFiltros_() {
+    UI.renderizarChipsFiltros('neFiltrosAtivos', CHIPS_NE_, aplicarFiltros_);
   }
 
   function filtrosAtuais() {
@@ -180,28 +181,6 @@ const TelaNotasEmpenho = (function () {
     } catch (e) { /* pré-carga é best-effort */ }
   }
 
-  /** Chave de filtrosAtuais() correspondente a cada id de filtro-multiplo da barra - ver aoLimparFiltroIndividual_. */
-  const CHAVE_POR_FILTRO_ = {
-    neFiltroUnidade: 'unidade_id', neFiltroOss: 'oss', neFiltroObjeto: 'objeto',
-    neFiltroTipoUnidade: 'tipo_unidade', neFiltroDea: 'dea', neFiltroFonte: 'fonte',
-    neFiltroAno: 'ano', neFiltroCompetencia: 'competencia', neBusca: 'busca'
-  };
-
-  /**
-   * "x" individual de um filtro: recarrega usando o último filtro realmente
-   * aplicado (ultimoFiltroJson), só com este campo zerado por cima - ver
-   * mesma função em js/sof.js para a explicação completa.
-   */
-  function aoLimparFiltroIndividual_(idCampo) {
-    const chave = CHAVE_POR_FILTRO_[idCampo];
-    if (!chave) return;
-    const aplicado = ultimoFiltroJson ? JSON.parse(ultimoFiltroJson) : {};
-    // Busca livre zera pra string vazia (é texto, não lista de valores como os demais).
-    const filtros = Object.assign({}, aplicado, { [chave]: chave === 'busca' ? '' : [] });
-    paginaAtual = 1;
-    carregarComFiltros_(filtros);
-  }
-
   /** Evita reler a lista/mostrar o spinner quando Filtrar/Limpar filtros/"x" não mudam nada de fato. */
   function filtrosMudaram_() {
     return JSON.stringify(filtrosAtuais()) !== ultimoFiltroJson;
@@ -230,7 +209,11 @@ const TelaNotasEmpenho = (function () {
     await carregarComFiltros_(filtrosAtuais());
   }
 
+  // Número da carga mais recente - ver mesma variável em js/recibos.js.
+  let seqCarga_ = 0;
+
   async function carregarComFiltros_(filtros) {
+    const minha = ++seqCarga_;
     // Zera o cache do combo "Nota de Empenho a Reforçar" (Nova NE -> Reforço):
     // ele é buscado sem filtro na primeira vez que esse tipo é selecionado no
     // modal, e precisa refletir qualquer NE criada desde o último carregar().
@@ -240,12 +223,20 @@ const TelaNotasEmpenho = (function () {
     // plano, quando os campos da tela podem já ter mudado.
     competenciasFiltradas_ = filtros.competencia || [];
     ultimoFiltroJson = JSON.stringify(filtros);
+    renderChipsFiltros_();
     const params = Object.assign({ page: paginaAtual, pageSize: tamanhoPagina }, filtros);
-    const resposta = await CacheAbas.comRevalidacao('notasEmpenho', params,
-      (opcoes) => Api.chamar('listarNotasEmpenho', params, opcoes),
-      aplicarResposta_
-    );
-    aplicarResposta_(resposta);
+    const lista = document.getElementById('listaNe');
+    if (lista) lista.classList.add('lista-atualizando');
+    try {
+      const resposta = await CacheAbas.comRevalidacao('notasEmpenho', params,
+        (opcoes) => Api.chamar('listarNotasEmpenho', params, Object.assign({ semSpinner: true }, opcoes)),
+        (dados) => { if (minha === seqCarga_) aplicarResposta_(dados); }
+      );
+      if (minha === seqCarga_) aplicarResposta_(resposta);
+    } finally {
+      const listaAgora = document.getElementById('listaNe');
+      if (minha === seqCarga_ && listaAgora) listaAgora.classList.remove('lista-atualizando');
+    }
   }
 
   /** id do widget -> dimensão no mapa de facetas (ver UI.aplicarFacetas). */
@@ -268,14 +259,10 @@ const TelaNotasEmpenho = (function () {
     renderPaginacao();
   }
 
-  /** Muda tamanhoPagina a partir de qualquer um dos dois seletores (topo/embaixo) e sincroniza o outro - ver mesma função em js/sof.js. */
+  /** Muda tamanhoPagina pelo seletor "Por página" do rodapé (o do topo saiu na sessão 2026-09-30). */
   function mudarTamanhoPagina_(valorSelecionado) {
     tamanhoPagina = valorSelecionado === 'todos' ? TAMANHO_PAGINA_TODOS_ : Number(valorSelecionado);
     paginaAtual = 1;
-    ['neTamanhoPaginaTopo', 'neTamanhoPagina'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.value = valorSelecionado;
-    });
     carregar();
   }
 

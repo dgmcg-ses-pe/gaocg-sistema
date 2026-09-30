@@ -109,45 +109,34 @@ const TelaSof = (function () {
     ]);
     unidades = unidadesCarregadas.items;
     const tiposUnidade = Array.from(new Set(unidades.map(u => u.tipo).filter(Boolean))).sort();
+    // Mesmo layout de barra de Recibos/Notas de Empenho (sessão 2026-09-30) -
+    // ver comentário em render() de js/recibos.js.
     document.getElementById('conteudo').innerHTML = `
-      <h2 class="titulo-tela">SOF</h2>
-      <div class="painel">
-        <div class="barra-filtros">
-          <div class="campo campo-tamanho-pagina"><label>Itens por página</label>
-            <select id="sofTamanhoPaginaTopo">${UI.opcoesTamanhoPaginaHtml(tamanhoPagina === TAMANHO_PAGINA_TODOS_ ? 'todos' : tamanhoPagina)}</select>
-          </div>
-          <div class="campo campo-busca-livre"><label>Busca livre</label>
-            <input type="text" id="sofBusca" placeholder="unidade, SEI, valor..." /><button type="button" class="busca-livre-x" data-alvo="sofBusca" title="Limpar busca livre">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">Unidade</label>
-            <div id="sofFiltroUnidade"></div><button type="button" class="filtro-multiplo-x" data-alvo="sofFiltroUnidade" title="Limpar filtro de Unidade">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">OSS</label>
-            <div id="sofFiltroOss"></div><button type="button" class="filtro-multiplo-x" data-alvo="sofFiltroOss" title="Limpar filtro de OSS">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">Objeto</label>
-            <div id="sofFiltroObjeto"></div><button type="button" class="filtro-multiplo-x" data-alvo="sofFiltroObjeto" title="Limpar filtro de Objeto">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">Tipo de unidade</label>
-            <div id="sofFiltroTipoUnidade"></div><button type="button" class="filtro-multiplo-x" data-alvo="sofFiltroTipoUnidade" title="Limpar filtro de Tipo de unidade">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">DEA</label>
-            <div id="sofFiltroDea"></div><button type="button" class="filtro-multiplo-x" data-alvo="sofFiltroDea" title="Limpar filtro de DEA">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">Fonte</label>
-            <div id="sofFiltroFonte"></div><button type="button" class="filtro-multiplo-x" data-alvo="sofFiltroFonte" title="Limpar filtro de Fonte">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">Ano</label>
-            <div id="sofFiltroAno"></div><button type="button" class="filtro-multiplo-x" data-alvo="sofFiltroAno" title="Limpar filtro de Ano">&times;</button>
-          </div>
-          <label style="align-self:center;font-size:13px;white-space:nowrap"><input type="checkbox" id="sofFiltroSemNe" /> Sem NE emitida</label>
-          <button class="botao" id="btnFiltrarSof">Filtrar</button>
-          <button class="botao botao-limpar-filtros" id="btnLimparFiltrosSof">Limpar filtros</button>
-          <button class="botao" id="btnGerarRelatorioSof">Gerar Relatório</button>
-          <button class="botao" id="btnModoSelecaoLoteSof">Apagar cards</button>
-          <span style="flex:1"></span>
+      <div class="cabecalho-tela">
+        <h2 class="titulo-tela">SOF</h2>
+        <div class="acoes-tela">
+          <button class="botao" id="btnGerarRelatorioSof">Gerar relatório</button>
+          <button class="botao" id="btnModoSelecaoLoteSof" title="Marcar várias SOFs para excluir de uma vez">Selecionar para excluir</button>
           <button class="botao primario" id="btnNovoSof">+ Nova SOF</button>
         </div>
+      </div>
+      <div class="painel">
+        <div class="barra-filtros">
+          <div class="campo campo-busca-livre"><label for="sofBusca">Busca livre</label>
+            <input type="text" id="sofBusca" placeholder="Unidade, nº SOF, nº do processo SEI, valor..." />
+          </div>
+          <div class="campo campo-filtro-multiplo"><label>Ano</label><div id="sofFiltroAno"></div></div>
+          <div class="campo campo-filtro-multiplo"><label>Unidade</label><div id="sofFiltroUnidade"></div></div>
+          <div class="campo campo-filtro-multiplo"><label>OSS</label><div id="sofFiltroOss"></div></div>
+          <div class="campo campo-filtro-multiplo"><label>Tipo de unidade</label><div id="sofFiltroTipoUnidade"></div></div>
+          <div class="campo campo-filtro-multiplo"><label>Objeto</label><div id="sofFiltroObjeto"></div></div>
+          <div class="campo campo-filtro-multiplo"><label>Fonte</label><div id="sofFiltroFonte"></div></div>
+          <div class="campo campo-filtro-multiplo"><label>DEA</label><div id="sofFiltroDea"></div></div>
+          <div class="campo campo-checkbox-filtro">
+            <label class="rotulo-checkbox"><input type="checkbox" id="sofFiltroSemNe" /> Sem NE emitida</label>
+          </div>
+        </div>
+        <div class="filtros-ativos oculto" id="sofFiltrosAtivos"></div>
         <div class="barra-selecao-lote oculto" id="barraSelecaoLoteSof">
           <label class="rotulo-checkbox"><input type="checkbox" id="chkSelecionarTodosSof" /> Selecionar todos</label>
           <span id="contagemSelecaoLoteSof">0 selecionado(s)</span>
@@ -158,10 +147,7 @@ const TelaSof = (function () {
         <div class="paginacao" id="paginacaoSof"></div>
       </div>`;
 
-    document.getElementById('btnFiltrarSof').addEventListener('click', () => { if (filtrosMudaram_()) { paginaAtual = 1; carregar(); } });
-    document.getElementById('sofBusca').addEventListener('keydown', e => {
-      if (e.key === 'Enter' && filtrosMudaram_()) { paginaAtual = 1; carregar(); }
-    });
+    UI.ligarBuscaAutomatica('sofBusca', aplicarFiltros_);
     document.getElementById('btnNovoSof').addEventListener('click', async function () {
       this.disabled = true;
       try { await abrirFormulario(); } finally { this.disabled = false; }
@@ -175,33 +161,46 @@ const TelaSof = (function () {
       atualizarBarraSelecaoLote_();
       renderCards();
     });
-    // Seletor "Itens por página" duplicado no topo (sessão 2026-08-31,
-    // pedido do usuário: "pra quem estiver utilizando saber que existe essa
-    // opção só de olhar a aba inicialmente") - o de baixo (renderPaginacao)
-    // continua sendo o "dono" da opção, reconstruído a cada carregar(); este
-    // aqui só precisa ficar sincronizado com ele (ver mudarTamanhoPagina_).
-    document.getElementById('sofTamanhoPaginaTopo').addEventListener('change', function () { mudarTamanhoPagina_(this.value); });
-    document.getElementById('sofFiltroSemNe').addEventListener('change', () => { paginaAtual = 1; carregar(); });
+    document.getElementById('sofFiltroSemNe').addEventListener('change', aplicarFiltros_);
     // Estas são as opções INICIAIS. A partir da primeira carga, todas as listas
     // passam a vir das facetas do backend (ver FACETAS_SOF_/aplicarResposta_):
     // cada filtro só mostra valores que ainda levam a algum resultado, dado o
     // que está marcado nos outros. O estreitamento antigo, que valia só para
     // Unidade/Tipo/OSS e rodava no clique do checkbox, foi substituído por isso
     // - dois mecanismos disputando a mesma lista se anulariam.
-    UI.criarFiltroMultiplo('sofFiltroUnidade', unidades.map(u => ({ valor: u.id, rotulo: u.nome })));
-    UI.criarFiltroMultiplo('sofFiltroOss', opcoesOss.map(o => o.valor));
-    UI.criarFiltroMultiplo('sofFiltroObjeto', opcoesObjeto.map(o => o.valor));
-    UI.criarFiltroMultiplo('sofFiltroTipoUnidade', tiposUnidade);
-    UI.criarFiltroMultiplo('sofFiltroDea', ['SIM', 'NÃO']);
-    UI.criarFiltroMultiplo('sofFiltroFonte', OPCOES_FONTE);
-    UI.criarFiltroMultiplo('sofFiltroAno', UI.listaAnos());
-    UI.ligarLimpezaFiltros('.barra-filtros', 'btnLimparFiltrosSof', () => {
-      document.getElementById('sofFiltroSemNe').checked = false;
-      if (filtrosMudaram_()) { paginaAtual = 1; carregar(); }
-    }, aoLimparFiltroIndividual_);
+    UI.criarFiltroMultiplo('sofFiltroUnidade', unidades.map(u => ({ valor: u.id, rotulo: u.nome })), null, aplicarFiltros_);
+    UI.criarFiltroMultiplo('sofFiltroOss', opcoesOss.map(o => o.valor), null, aplicarFiltros_);
+    UI.criarFiltroMultiplo('sofFiltroObjeto', opcoesObjeto.map(o => o.valor), null, aplicarFiltros_);
+    UI.criarFiltroMultiplo('sofFiltroTipoUnidade', tiposUnidade, null, aplicarFiltros_);
+    UI.criarFiltroMultiplo('sofFiltroDea', ['SIM', 'NÃO'], null, aplicarFiltros_);
+    UI.criarFiltroMultiplo('sofFiltroFonte', OPCOES_FONTE, null, aplicarFiltros_);
+    UI.criarFiltroMultiplo('sofFiltroAno', UI.listaAnos(), null, aplicarFiltros_);
     if (opts && opts.semNe) document.getElementById('sofFiltroSemNe').checked = true;
     await carregar();
     if (opts && opts.abrirId) abrirSofExistente(opts.abrirId);
+  }
+
+  /** Aplica os filtros da barra (ao fechar um dropdown, parar de digitar na busca, marcar "Sem NE emitida" ou remover um chip). */
+  function aplicarFiltros_() {
+    if (!filtrosMudaram_()) { renderChipsFiltros_(); return; }
+    paginaAtual = 1;
+    carregar().catch(err => UI.toast(err.message, 'erro'));
+  }
+
+  const CHIPS_SOF_ = [
+    { id: 'sofBusca', rotulo: 'Busca', tipo: 'texto' },
+    { id: 'sofFiltroAno', rotulo: 'Ano', tipo: 'multiplo' },
+    { id: 'sofFiltroUnidade', rotulo: 'Unidade', tipo: 'multiplo' },
+    { id: 'sofFiltroOss', rotulo: 'OSS', tipo: 'multiplo' },
+    { id: 'sofFiltroTipoUnidade', rotulo: 'Tipo de unidade', tipo: 'multiplo' },
+    { id: 'sofFiltroObjeto', rotulo: 'Objeto', tipo: 'multiplo' },
+    { id: 'sofFiltroFonte', rotulo: 'Fonte', tipo: 'multiplo' },
+    { id: 'sofFiltroDea', rotulo: 'DEA', tipo: 'multiplo' },
+    { id: 'sofFiltroSemNe', rotulo: 'Sem NE emitida', tipo: 'checkbox' }
+  ];
+
+  function renderChipsFiltros_() {
+    UI.renderizarChipsFiltros('sofFiltrosAtivos', CHIPS_SOF_, aplicarFiltros_);
   }
 
   /** Evita reler a lista/mostrar o spinner quando Filtrar/Limpar filtros/"x" não mudam nada de fato. */
@@ -263,44 +262,30 @@ const TelaSof = (function () {
     } catch (e) { /* pré-carga é best-effort - ver comentário acima */ }
   }
 
-  /** Chave de filtrosAtuais() correspondente a cada id de filtro-multiplo da barra - ver aoLimparFiltroIndividual_. */
-  const CHAVE_POR_FILTRO_ = {
-    sofFiltroUnidade: 'unidade_id', sofFiltroOss: 'oss', sofFiltroObjeto: 'objeto',
-    sofFiltroTipoUnidade: 'tipo_unidade', sofFiltroDea: 'dea', sofFiltroFonte: 'fonte',
-    sofFiltroAno: 'ano', sofBusca: 'busca'
-  };
-
-  /**
-   * "x" individual de um filtro: recarrega usando o ÚLTIMO FILTRO REALMENTE
-   * APLICADO (ultimoFiltroJson), só com este campo zerado por cima - nunca o
-   * estado ao vivo dos outros campos (filtrosAtuais()), que pode ter seleções
-   * feitas mas ainda não confirmadas em "Filtrar". Nenhum outro widget é
-   * tocado - se outro campo tinha uma seleção pendente, ela continua
-   * marcada na tela, só não entra nesta recarga (o usuário ainda pode
-   * clicar "Filtrar" pra aplicá-la quando quiser).
-   */
-  function aoLimparFiltroIndividual_(idCampo) {
-    const chave = CHAVE_POR_FILTRO_[idCampo];
-    if (!chave) return;
-    const aplicado = ultimoFiltroJson ? JSON.parse(ultimoFiltroJson) : {};
-    // Busca livre zera pra string vazia (é texto, não lista de valores como os demais).
-    const filtros = Object.assign({}, aplicado, { [chave]: chave === 'busca' ? '' : [] });
-    paginaAtual = 1;
-    carregarComFiltros_(filtros);
-  }
-
   async function carregar() {
     await carregarComFiltros_(filtrosAtuais());
   }
 
+  // Número da carga mais recente - ver mesma variável em js/recibos.js.
+  let seqCarga_ = 0;
+
   async function carregarComFiltros_(filtros) {
+    const minha = ++seqCarga_;
     ultimoFiltroJson = JSON.stringify(filtros);
+    renderChipsFiltros_();
     const params = Object.assign({ page: paginaAtual, pageSize: tamanhoPagina }, filtros);
-    const resposta = await CacheAbas.comRevalidacao('sof', params,
-      (opcoes) => Api.chamar('listarSof', params, opcoes),
-      aplicarResposta_
-    );
-    aplicarResposta_(resposta);
+    const lista = document.getElementById('listaSof');
+    if (lista) lista.classList.add('lista-atualizando');
+    try {
+      const resposta = await CacheAbas.comRevalidacao('sof', params,
+        (opcoes) => Api.chamar('listarSof', params, Object.assign({ semSpinner: true }, opcoes)),
+        (dados) => { if (minha === seqCarga_) aplicarResposta_(dados); }
+      );
+      if (minha === seqCarga_) aplicarResposta_(resposta);
+    } finally {
+      const listaAgora = document.getElementById('listaSof');
+      if (minha === seqCarga_ && listaAgora) listaAgora.classList.remove('lista-atualizando');
+    }
   }
 
   /** id do widget -> dimensão no mapa de facetas (ver UI.aplicarFacetas). */
@@ -479,20 +464,10 @@ const TelaSof = (function () {
     }
   }
 
-  /**
-   * Muda tamanhoPagina a partir do valor de QUALQUER UM dos dois seletores
-   * ("Itens por página" no topo da barra de filtros, ou "Por página" perto
-   * da paginação embaixo - sessão 2026-08-31, pedido do usuário: a opção
-   * precisa aparecer no topo também, "só de olhar a aba inicialmente") -
-   * sincroniza o OUTRO seletor na hora (sem esperar a rede) e recarrega.
-   */
+  /** Muda tamanhoPagina pelo seletor "Por página" do rodapé (o do topo saiu na sessão 2026-09-30). */
   function mudarTamanhoPagina_(valorSelecionado) {
     tamanhoPagina = valorSelecionado === 'todos' ? TAMANHO_PAGINA_TODOS_ : Number(valorSelecionado);
     paginaAtual = 1;
-    ['sofTamanhoPaginaTopo', 'sofTamanhoPagina'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.value = valorSelecionado;
-    });
     carregar();
   }
 

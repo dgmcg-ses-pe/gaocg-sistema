@@ -157,11 +157,19 @@ const Api = (function () {
    * o que é sentido como lentidão mesmo já sendo uma chamada não bloqueante
    * no código (ver PROGRESS.md, seção de Performance).
    */
+  /**
+   * opcoes.semSpinner: não acende o spinner global (que bloqueia a tela
+   * inteira), mas continua com as novas tentativas de uma chamada em primeiro
+   * plano - diferente de `silencioso`, que também desliga o retry. Usado pela
+   * recarga das listagens ao mexer num filtro: a própria lista mostra
+   * "Atualizando…" e a barra de filtros continua livre.
+   */
   async function executar_(action, payload, opcoes) {
     const corpo = Object.assign({ action, token }, payload || {});
     const silencioso = !!(opcoes && opcoes.silencioso);
+    const semSpinner = silencioso || !!(opcoes && opcoes.semSpinner);
 
-    if (!silencioso) UI.mostrarCarregando();
+    if (!semSpinner) UI.mostrarCarregando();
     try {
       let json = await requisitarComRetry_(corpo, silencioso);
       if (!json.ok && json.error === ERRO_ACTION_AUSENTE_) {
@@ -184,7 +192,7 @@ const Api = (function () {
       }
       return json.data;
     } finally {
-      if (!silencioso) UI.esconderCarregando();
+      if (!semSpinner) UI.esconderCarregando();
     }
   }
 

@@ -124,58 +124,39 @@ const TelaRecibos = (function () {
     statusOpcoesTodasAtual = statusFiltroOpcoesBrutas;
     unidades = unidadesCarregadas.items;
     const tiposUnidade = Array.from(new Set(unidades.map(u => u.tipo).filter(Boolean))).sort();
+    // Layout da barra (sessão 2026-09-30, pedido do usuário: menos confuso pra
+    // quem está aprendendo): ações no cabeçalho, separadas dos filtros; filtros
+    // na mesma ordem das 3 telas (Busca, Quando, Onde, O quê, Situação), sem
+    // "x" por campo (viraram os chips de "Filtros ativos") e sem botão
+    // "Filtrar" (aplicam sozinhos - ver aplicarFiltros_). "Itens por página"
+    // ficou só no rodapé, junto da paginação.
     document.getElementById('conteudo').innerHTML = `
-      <h2 class="titulo-tela">Recibos</h2>
+      <div class="cabecalho-tela">
+        <h2 class="titulo-tela">Recibos</h2>
+        <div class="acoes-tela">
+          <button class="botao" id="btnGerarRelatorioRec">Gerar relatório</button>
+          <button class="botao" id="btnGerarRecibosMeta" title="Cria um card em branco (sem Nº Processo) para cada meta ativa que ainda não tem recibo na competência escolhida">Gerar recibos da meta</button>
+          <button class="botao" id="btnModoSelecaoLoteRec" title="Marcar vários recibos para excluir de uma vez">Selecionar para excluir</button>
+          <button class="botao primario" id="btnNovoRecibo">+ Novo processo</button>
+        </div>
+      </div>
       <div class="grade-indicadores" id="recIndicadores"></div>
       <div class="painel">
         <div class="barra-filtros">
-          <div class="campo campo-tamanho-pagina"><label>Itens por página</label>
-            <select id="recTamanhoPaginaTopo">${UI.opcoesTamanhoPaginaHtml(tamanhoPagina === TAMANHO_PAGINA_TODOS_ ? 'todos' : tamanhoPagina)}</select>
+          <div class="campo campo-busca-livre"><label for="recBusca">Busca livre</label>
+            <input type="text" id="recBusca" placeholder="Unidade, nº processo, nota de empenho, contrato, ordem bancária..." />
           </div>
-          <div class="campo campo-busca-livre"><label>Busca livre</label>
-            <input type="text" id="recBusca" placeholder="processo, ordem bancária, valor..." /><button type="button" class="busca-livre-x" data-alvo="recBusca" title="Limpar busca livre">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">Unidade</label>
-            <div id="recFiltroUnidade"></div><button type="button" class="filtro-multiplo-x" data-alvo="recFiltroUnidade" title="Limpar filtro de Unidade">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">OSS</label>
-            <div id="recFiltroOss"></div><button type="button" class="filtro-multiplo-x" data-alvo="recFiltroOss" title="Limpar filtro de OSS">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">Objeto</label>
-            <div id="recFiltroObjeto"></div><button type="button" class="filtro-multiplo-x" data-alvo="recFiltroObjeto" title="Limpar filtro de Objeto">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">Tipo de unidade</label>
-            <div id="recFiltroTipoUnidade"></div><button type="button" class="filtro-multiplo-x" data-alvo="recFiltroTipoUnidade" title="Limpar filtro de Tipo de unidade">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">DEA</label>
-            <div id="recFiltroDea"></div><button type="button" class="filtro-multiplo-x" data-alvo="recFiltroDea" title="Limpar filtro de DEA">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">Competência</label>
-            <div id="recFiltroCompetencia"></div><button type="button" class="filtro-multiplo-x" data-alvo="recFiltroCompetencia" title="Limpar filtro de Competência">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">Ano</label>
-            <div id="recFiltroAno"></div><button type="button" class="filtro-multiplo-x" data-alvo="recFiltroAno" title="Limpar filtro de Ano">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">Fonte</label>
-            <div id="recFiltroFonte"></div><button type="button" class="filtro-multiplo-x" data-alvo="recFiltroFonte" title="Limpar filtro de Fonte">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">Status</label>
-            <div id="recFiltroStatus"></div><button type="button" class="filtro-multiplo-x" data-alvo="recFiltroStatus" title="Limpar filtro de Status">&times;</button>
-          </div>
-          <div class="campo"><label>Contrato de Gestão</label><input id="recFiltroContratoGestao" placeholder="Contrato de Gestão" /></div>
-          <div class="campo"><label>Nota de Empenho</label><input id="recFiltroNotaEmpenho" placeholder="Nota de Empenho" /></div>
-          <div class="campo"><label>Nº Processo</label><input id="recFiltroNumeroProcesso" placeholder="Nº Processo" /></div>
-          <button class="botao" id="btnFiltrarRec">Filtrar</button>
-          <button class="botao botao-limpar-filtros" id="btnLimparFiltrosRec">Limpar filtros</button>
-          <button class="botao" id="btnGerarRelatorioRec">Gerar Relatório</button>
-          <button class="botao" id="btnModoSelecaoLoteRec">Apagar Recibos</button>
-          <div class="acao-gerar-meta">
-            <div class="campo"><label>Competência p/ gerar</label><select id="recCompetenciaGerarMeta">${UI.opcoesCompetenciaHtml(mesAtualComoCompetencia_())}</select></div>
-            <button class="botao" id="btnGerarRecibosMeta" title="Cria um card em branco (sem Nº Processo) pra cada meta ativa que ainda não tem recibo nessa competência">Gerar recibos da meta</button>
-          </div>
-          <span style="flex:1"></span>
-          <button class="botao primario" id="btnNovoRecibo">+ Novo processo</button>
+          <div class="campo campo-filtro-multiplo"><label>Competência</label><div id="recFiltroCompetencia"></div></div>
+          <div class="campo campo-filtro-multiplo"><label>Ano</label><div id="recFiltroAno"></div></div>
+          <div class="campo campo-filtro-multiplo"><label>Unidade</label><div id="recFiltroUnidade"></div></div>
+          <div class="campo campo-filtro-multiplo"><label>OSS</label><div id="recFiltroOss"></div></div>
+          <div class="campo campo-filtro-multiplo"><label>Tipo de unidade</label><div id="recFiltroTipoUnidade"></div></div>
+          <div class="campo campo-filtro-multiplo"><label>Objeto</label><div id="recFiltroObjeto"></div></div>
+          <div class="campo campo-filtro-multiplo"><label>Fonte</label><div id="recFiltroFonte"></div></div>
+          <div class="campo campo-filtro-multiplo"><label>DEA</label><div id="recFiltroDea"></div></div>
+          <div class="campo campo-filtro-multiplo"><label>Status</label><div id="recFiltroStatus"></div></div>
         </div>
+        <div class="filtros-ativos oculto" id="recFiltrosAtivos"></div>
         <div class="barra-selecao-lote oculto" id="barraSelecaoLoteRec">
           <label class="rotulo-checkbox"><input type="checkbox" id="chkSelecionarTodosRec" /> Selecionar todos</label>
           <span id="contagemSelecaoLoteRec">0 selecionado(s)</span>
@@ -186,39 +167,13 @@ const TelaRecibos = (function () {
         <div class="paginacao" id="paginacaoRec"></div>
       </div>`;
 
-    document.getElementById('btnFiltrarRec').addEventListener('click', () => { if (filtrosMudaram_()) { paginaAtual = 1; carregar(); } });
-    ['recBusca', 'recFiltroContratoGestao', 'recFiltroNotaEmpenho', 'recFiltroNumeroProcesso'].forEach(id => {
-      document.getElementById(id).addEventListener('keydown', e => {
-        if (e.key === 'Enter' && filtrosMudaram_()) { paginaAtual = 1; carregar(); }
-      });
-    });
+    UI.ligarBuscaAutomatica('recBusca', aplicarFiltros_);
     document.getElementById('btnNovoRecibo').addEventListener('click', async function () {
       this.disabled = true;
       try { await abrirFormularioNovo(); } finally { this.disabled = false; }
     });
     document.getElementById('btnGerarRelatorioRec').addEventListener('click', abrirGerarRelatorio);
-    document.getElementById('btnGerarRecibosMeta').addEventListener('click', async function () {
-      const competencia = document.getElementById('recCompetenciaGerarMeta').value;
-      if (!competencia) { UI.toast('Escolha a competência.', 'erro'); return; }
-      this.disabled = true;
-      try {
-        const resposta = await Api.chamar('gerarRecibosMeta', { competencia });
-        Api.invalidarCache('listarRecibos');
-        CacheAbas.invalidar('recibos');
-        CacheAbas.invalidar('dashboard');
-        if (resposta.criados === 0) {
-          UI.toast('Nenhuma meta pendente para essa competência - toda meta ativa já tem recibo.', 'info');
-        } else {
-          UI.toast(`${resposta.criados} card(s) criado(s), em branco, pra completar (destacados até o Nº Processo ser preenchido).`, 'sucesso');
-          paginaAtual = 1;
-          await carregar();
-        }
-      } catch (err) {
-        UI.toast(err.message, 'erro');
-      } finally {
-        this.disabled = false;
-      }
-    });
+    document.getElementById('btnGerarRecibosMeta').addEventListener('click', abrirGerarRecibosMeta_);
     document.getElementById('btnModoSelecaoLoteRec').addEventListener('click', () => alternarModoSelecaoLote_());
     document.getElementById('btnCancelarSelecaoLoteRec').addEventListener('click', () => alternarModoSelecaoLote_(false));
     document.getElementById('btnExcluirSelecionadosRec').addEventListener('click', excluirSelecionadosLoteClique_);
@@ -227,20 +182,19 @@ const TelaRecibos = (function () {
       atualizarBarraSelecaoLote_();
       renderTabela();
     });
-    // Seletor "Itens por página" duplicado no topo - ver mesma explicação em js/sof.js.
-    document.getElementById('recTamanhoPaginaTopo').addEventListener('change', function () { mudarTamanhoPagina_(this.value); });
     // Opções INICIAIS - a partir da primeira carga elas vêm das facetas do
     // backend (ver FACETAS_REC_/aplicarResposta_). Substitui o estreitamento
-    // antigo, que valia só para Unidade/Tipo/OSS.
-    UI.criarFiltroMultiplo('recFiltroUnidade', unidades.map(u => ({ valor: u.id, rotulo: u.nome })));
-    UI.criarFiltroMultiplo('recFiltroOss', opcoesOss.map(o => o.valor));
-    UI.criarFiltroMultiplo('recFiltroObjeto', opcoesObjeto.map(o => o.valor));
-    UI.criarFiltroMultiplo('recFiltroTipoUnidade', tiposUnidade);
-    UI.criarFiltroMultiplo('recFiltroDea', ['SIM', 'NÃO']);
-    UI.criarFiltroMultiplo('recFiltroCompetencia', UI.listaCompetencias());
-    UI.criarFiltroMultiplo('recFiltroAno', UI.listaAnos());
-    UI.criarFiltroMultiplo('recFiltroFonte', ['TESOURO', 'SUS', 'Outra']);
-    UI.criarFiltroMultiplo('recFiltroStatus', statusFiltroOpcoes.map(o => o.valor));
+    // antigo, que valia só para Unidade/Tipo/OSS. O 4º argumento aplica o
+    // filtro quando o dropdown fecha com a seleção alterada.
+    UI.criarFiltroMultiplo('recFiltroUnidade', unidades.map(u => ({ valor: u.id, rotulo: u.nome })), null, aplicarFiltros_);
+    UI.criarFiltroMultiplo('recFiltroOss', opcoesOss.map(o => o.valor), null, aplicarFiltros_);
+    UI.criarFiltroMultiplo('recFiltroObjeto', opcoesObjeto.map(o => o.valor), null, aplicarFiltros_);
+    UI.criarFiltroMultiplo('recFiltroTipoUnidade', tiposUnidade, null, aplicarFiltros_);
+    UI.criarFiltroMultiplo('recFiltroDea', ['SIM', 'NÃO'], null, aplicarFiltros_);
+    UI.criarFiltroMultiplo('recFiltroCompetencia', UI.listaCompetencias(), null, aplicarFiltros_);
+    UI.criarFiltroMultiplo('recFiltroAno', UI.listaAnos(), null, aplicarFiltros_);
+    UI.criarFiltroMultiplo('recFiltroFonte', ['TESOURO', 'SUS', 'Outra'], null, aplicarFiltros_);
+    UI.criarFiltroMultiplo('recFiltroStatus', statusFiltroOpcoes.map(o => o.valor), null, aplicarFiltros_);
     // Competência (sessão 2026-08-31, pedido do usuário: "todas as linhas
     // referente áquele mês já sejam carregadas juntos" ao entrar na aba) -
     // sem competência explícita vinda de fora (navegação normal pelo menu),
@@ -254,10 +208,6 @@ const TelaRecibos = (function () {
       // outro tamanhoPagina ficaria fora do intervalo real com TODOS.
       tamanhoPagina = TAMANHO_PAGINA_TODOS_;
       paginaAtual = 1;
-      // O seletor do topo já foi montado no HTML acima, ANTES deste reset
-      // rodar - sem isso ficaria mostrando o tamanho da visita anterior
-      // (ex. "20") mesmo com tamanhoPagina já em TODOS por baixo dos panos.
-      document.getElementById('recTamanhoPaginaTopo').value = 'todos';
     }
     if (filtroInicial && filtroInicial.status) UI.definirValoresFiltroMultiplo('recFiltroStatus', filtroInicial.status);
     // unidade_id/objeto (Dashboard, painel "Processos do mês" - Metas de
@@ -275,11 +225,72 @@ const TelaRecibos = (function () {
         .filter(v => excluir.indexOf(String(v).toUpperCase()) === -1);
       UI.definirValoresFiltroMultiplo('recFiltroStatus', selecionar);
     }
-    UI.ligarLimpezaFiltros('.barra-filtros', 'btnLimparFiltrosRec', () => {
-      if (filtrosMudaram_()) { paginaAtual = 1; carregar(); }
-    }, aoLimparFiltroIndividual_);
     await carregar();
     if (filtroInicial && filtroInicial.abrirId) abrirReciboExistente(filtroInicial.abrirId);
+  }
+
+  /** Aplica os filtros da barra (chamado ao fechar um dropdown, ao parar de digitar na busca ou ao remover um chip). */
+  function aplicarFiltros_() {
+    if (!filtrosMudaram_()) { renderChipsFiltros_(); return; }
+    paginaAtual = 1;
+    carregar().catch(err => UI.toast(err.message, 'erro'));
+  }
+
+  const CHIPS_REC_ = [
+    { id: 'recBusca', rotulo: 'Busca', tipo: 'texto' },
+    { id: 'recFiltroCompetencia', rotulo: 'Competência', tipo: 'multiplo' },
+    { id: 'recFiltroAno', rotulo: 'Ano', tipo: 'multiplo' },
+    { id: 'recFiltroUnidade', rotulo: 'Unidade', tipo: 'multiplo' },
+    { id: 'recFiltroOss', rotulo: 'OSS', tipo: 'multiplo' },
+    { id: 'recFiltroTipoUnidade', rotulo: 'Tipo de unidade', tipo: 'multiplo' },
+    { id: 'recFiltroObjeto', rotulo: 'Objeto', tipo: 'multiplo' },
+    { id: 'recFiltroFonte', rotulo: 'Fonte', tipo: 'multiplo' },
+    { id: 'recFiltroDea', rotulo: 'DEA', tipo: 'multiplo' },
+    { id: 'recFiltroStatus', rotulo: 'Status', tipo: 'multiplo' }
+  ];
+
+  function renderChipsFiltros_() {
+    UI.renderizarChipsFiltros('recFiltrosAtivos', CHIPS_REC_, aplicarFiltros_);
+  }
+
+  /**
+   * "Gerar recibos da meta" numa janela própria, com a competência dentro
+   * dela - antes o seletor ficava solto na barra de filtros, ao lado do
+   * filtro de Competência, e as duas "Competências" se confundiam.
+   */
+  function abrirGerarRecibosMeta_() {
+    const corpo = `
+      <p class="ajuda">Cria um card em branco (sem Nº Processo) para cada meta ativa que ainda não tem recibo na competência escolhida.</p>
+      <div class="campo"><label for="recCompetenciaGerarMeta">Competência</label>
+        <select id="recCompetenciaGerarMeta">${UI.opcoesCompetenciaHtml(mesAtualComoCompetencia_())}</select>
+      </div>`;
+    UI.abrirModal('Gerar recibos da meta', corpo,
+      '<button class="botao" id="btnCancelarGerarMeta">Cancelar</button><button class="botao primario" id="btnConfirmarGerarMeta">Gerar recibos</button>',
+      { pequeno: true });
+    document.getElementById('btnCancelarGerarMeta').addEventListener('click', UI.fecharModal);
+    document.getElementById('btnConfirmarGerarMeta').addEventListener('click', async function () {
+      const competencia = document.getElementById('recCompetenciaGerarMeta').value;
+      if (!competencia) { UI.toast('Escolha a competência.', 'erro'); return; }
+      this.disabled = true;
+      try {
+        const resposta = await Api.chamar('gerarRecibosMeta', { competencia });
+        Api.invalidarCache('listarRecibos');
+        CacheAbas.invalidar('recibos');
+        CacheAbas.invalidar('dashboard');
+        UI.fecharModal();
+        if (resposta.criados === 0) {
+          UI.toast('Nenhuma meta pendente para essa competência - toda meta ativa já tem recibo.', 'info');
+        } else {
+          UI.toast(`${resposta.criados} card(s) criado(s), em branco, pra completar (destacados até o Nº Processo ser preenchido).`, 'sucesso');
+          paginaAtual = 1;
+          await carregar();
+        }
+      } catch (err) {
+        UI.toast(err.message, 'erro');
+      } finally {
+        this.disabled = false;
+      }
+    });
   }
 
   /** Evita reler a lista/mostrar o spinner quando Filtrar/Limpar filtros/"x" não mudam nada de fato. */
@@ -300,10 +311,10 @@ const TelaRecibos = (function () {
       // anoDaCompetencia_ em backend/Recibos.gs. Combina com Competência por E.
       ano: UI.valoresFiltroMultiplo('recFiltroAno'),
       fonte: UI.valoresFiltroMultiplo('recFiltroFonte'),
-      status: UI.valoresFiltroMultiplo('recFiltroStatus'),
-      contrato_gestao: document.getElementById('recFiltroContratoGestao').value.trim(),
-      nota_empenho: document.getElementById('recFiltroNotaEmpenho').value.trim(),
-      numero_processo: document.getElementById('recFiltroNumeroProcesso').value.trim()
+      status: UI.valoresFiltroMultiplo('recFiltroStatus')
+      // Contrato de Gestão, Nota de Empenho e Nº Processo deixaram de ter campo
+      // próprio (sessão 2026-09-30): a Busca livre já procura em todos os
+      // campos do recibo (filtrarLinhasRecibos_, backend/Recibos.gs).
     };
   }
 
@@ -317,8 +328,7 @@ const TelaRecibos = (function () {
   function filtrosPadrao_() {
     return {
       busca: '', unidade_id: [], oss: [], objeto: [], tipo_unidade: [], dea: [],
-      competencia: [mesAtualComoCompetencia_()], ano: [], fonte: [], status: [],
-      contrato_gestao: '', nota_empenho: '', numero_processo: ''
+      competencia: [mesAtualComoCompetencia_()], ano: [], fonte: [], status: []
     };
   }
 
@@ -339,42 +349,35 @@ const TelaRecibos = (function () {
     } catch (e) { /* pré-carga é best-effort */ }
   }
 
-  /** Chave de filtrosAtuais() correspondente a cada id de filtro-multiplo da barra - ver aoLimparFiltroIndividual_. */
-  const CHAVE_POR_FILTRO_ = {
-    recFiltroUnidade: 'unidade_id', recFiltroOss: 'oss', recFiltroObjeto: 'objeto',
-    recFiltroTipoUnidade: 'tipo_unidade', recFiltroDea: 'dea', recFiltroCompetencia: 'competencia',
-    recFiltroAno: 'ano', recFiltroFonte: 'fonte', recFiltroStatus: 'status', recBusca: 'busca'
-  };
-
-  /**
-   * "x" individual de um filtro: recarrega usando o último filtro realmente
-   * aplicado (ultimoFiltroJson), só com este campo zerado por cima - ver
-   * mesma função em js/sof.js para a explicação completa.
-   */
-  function aoLimparFiltroIndividual_(idCampo) {
-    const chave = CHAVE_POR_FILTRO_[idCampo];
-    if (!chave) return;
-    const aplicado = ultimoFiltroJson ? JSON.parse(ultimoFiltroJson) : {};
-    // Busca livre zera pra string vazia (é texto, não lista de valores como os demais).
-    const filtros = Object.assign({}, aplicado, { [chave]: chave === 'busca' ? '' : [] });
-    paginaAtual = 1;
-    carregarComFiltros_(filtros);
-  }
-
   async function carregar() {
     await carregarComFiltros_(filtrosAtuais());
   }
 
+  // Número da carga mais recente: com os filtros aplicando sozinhos, duas
+  // cargas podem se cruzar, e a resposta de uma mais antiga não pode
+  // sobrescrever a tela com filtros que já não estão mais valendo.
+  let seqCarga_ = 0;
+
   async function carregarComFiltros_(filtros) {
+    const minha = ++seqCarga_;
     ultimoFiltroJson = JSON.stringify(filtros);
+    renderChipsFiltros_();
     const params = Object.assign({ page: paginaAtual, pageSize: tamanhoPagina }, filtros);
-    // listarRecibos já devolve os indicadores calculados sobre a mesma leitura/filtro
-    // (evita reler a aba Recibos inteira duas vezes numa única troca de aba).
-    const resposta = await CacheAbas.comRevalidacao('recibos', params,
-      (opcoes) => Api.chamar('listarRecibos', params, opcoes),
-      aplicarResposta_
-    );
-    aplicarResposta_(resposta);
+    const lista = document.getElementById('listaRecibos');
+    if (lista) lista.classList.add('lista-atualizando');
+    try {
+      // listarRecibos já devolve os indicadores calculados sobre a mesma leitura/filtro
+      // (evita reler a aba Recibos inteira duas vezes numa única troca de aba).
+      // semSpinner: a lista mostra "Atualizando…" em vez de travar a tela inteira.
+      const resposta = await CacheAbas.comRevalidacao('recibos', params,
+        (opcoes) => Api.chamar('listarRecibos', params, Object.assign({ semSpinner: true }, opcoes)),
+        (dados) => { if (minha === seqCarga_) aplicarResposta_(dados); }
+      );
+      if (minha === seqCarga_) aplicarResposta_(resposta);
+    } finally {
+      const listaAgora = document.getElementById('listaRecibos');
+      if (minha === seqCarga_ && listaAgora) listaAgora.classList.remove('lista-atualizando');
+    }
   }
 
   /** id do widget -> dimensão no mapa de facetas (ver UI.aplicarFacetas). */
@@ -660,14 +663,10 @@ const TelaRecibos = (function () {
     });
   }
 
-  /** Muda tamanhoPagina a partir de qualquer um dos dois seletores (topo/embaixo) e sincroniza o outro - ver mesma função em js/sof.js. */
+  /** Muda tamanhoPagina pelo seletor "Por página" do rodapé (o do topo saiu na sessão 2026-09-30). */
   function mudarTamanhoPagina_(valorSelecionado) {
     tamanhoPagina = valorSelecionado === 'todos' ? TAMANHO_PAGINA_TODOS_ : Number(valorSelecionado);
     paginaAtual = 1;
-    ['recTamanhoPaginaTopo', 'recTamanhoPagina'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.value = valorSelecionado;
-    });
     carregar();
   }
 

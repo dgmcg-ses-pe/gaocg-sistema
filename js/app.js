@@ -871,12 +871,20 @@ const UI = (function () {
       .map(o => (typeof o === 'string' ? { valor: o, rotulo: o } : { valor: o.valor, rotulo: o.rotulo != null ? o.rotulo : o.valor }));
   }
 
-  function criarFiltroMultiplo(id, opcoes, aoMudar) {
+  /**
+   * aoAplicar (opcional): chamado quando o painel FECHA e a seleção mudou
+   * desde que ele abriu. É o gatilho do filtro automático das telas de
+   * SOF/Notas de Empenho/Recibos: marcar várias opções de uma vez vira uma
+   * recarga só, em vez de uma por clique.
+   */
+  function criarFiltroMultiplo(id, opcoes, aoMudar, aoAplicar) {
     const raiz = document.getElementById(id);
     if (!raiz) return null;
 
     let normalizadas = normalizarOpcoesFiltro_(opcoes);
     let selecionados = new Set();
+    let selecaoAoAbrir_ = null;
+    const chaveSelecao_ = () => Array.from(selecionados).sort().join('\u0001');
 
     raiz.classList.add('filtro-multiplo');
     raiz.innerHTML = `
@@ -965,12 +973,16 @@ const UI = (function () {
       buscaInput.value = '';
       renderOpcoes('');
       buscaInput.focus();
+      selecaoAoAbrir_ = chaveSelecao_();
       document.addEventListener('mousedown', aoClicarFora_, true);
     }
 
     function fechar() {
       painel.classList.add('oculto');
       document.removeEventListener('mousedown', aoClicarFora_, true);
+      const mudou = selecaoAoAbrir_ !== null && selecaoAoAbrir_ !== chaveSelecao_();
+      selecaoAoAbrir_ = null;
+      if (mudou && aoAplicar) aoAplicar();
     }
 
     botao.addEventListener('click', () => { painel.classList.contains('oculto') ? abrir() : fechar(); });
@@ -981,6 +993,10 @@ const UI = (function () {
 
     const api = {
       obterValores: () => Array.from(selecionados),
+      rotulosSelecionados: () => Array.from(selecionados).map(v => {
+        const opcao = normalizadas.find(o => o.valor === v);
+        return opcao ? opcao.rotulo : v;
+      }),
       definirValores: (valores) => {
         selecionados = new Set((valores || []).map(String));
         atualizarTexto();
@@ -1136,7 +1152,76 @@ const UI = (function () {
     }
   }
 
+  /** Zera um campo da barra de filtros descrito por {id, tipo} (multiplo | texto | checkbox). */
+  function limparCampoFiltro_(def) {
+    if (def.tipo === 'multiplo') { limparFiltroMultiplo(def.id); return; }
+    const el = document.getElementById(def.id);
+    if (!el) return;
+    if (def.tipo === 'checkbox') el.checked = false; else el.value = '';
+  }
+
+  /**
+   * Chips de "Filtros ativos" (troca os botões "x" de cada filtro por uma
+   * etiqueta removível por filtro em uso, mais um "Limpar tudo"). `defs` =
+   * [{ id, rotulo, tipo: 'multiplo' | 'texto' | 'checkbox' }], na ordem da
+   * barra. `aoAlterar` recarrega a tela depois de remover um chip ou limpar
+   * tudo. Esconde o container quando nenhum filtro está em uso.
+   */
+  function renderizarChipsFiltros(alvoId, defs, aoAlterar) {
+    const alvo = document.getElementById(alvoId);
+    if (!alvo) return;
+    const ativos = [];
+    defs.forEach(def => {
+      if (def.tipo === 'multiplo') {
+        const api = registroFiltrosMultiplos[def.id];
+        const rotulos = api ? api.rotulosSelecionados() : [];
+        if (rotulos.length) ativos.push({ def, valor: rotulos.length <= 2 ? rotulos.join(', ') : `${rotulos.length} selecionados` });
+      } else {
+        const el = document.getElementById(def.id);
+        if (!el) return;
+        if (def.tipo === 'checkbox' && el.checked) ativos.push({ def, valor: null });
+        if (def.tipo === 'texto' && el.value.trim()) ativos.push({ def, valor: el.value.trim() });
+      }
+    });
+    alvo.classList.toggle('oculto', ativos.length === 0);
+    if (!ativos.length) { alvo.innerHTML = ''; return; }
+    alvo.innerHTML = '<span class="filtros-ativos-rotulo">Filtros ativos:</span>'
+      + ativos.map((a, i) => `
+        <span class="chip-filtro" title="${escaparHtml(a.def.rotulo)}${a.valor === null ? '' : ': ' + escaparHtml(a.valor)}">
+          <span class="chip-filtro-texto">${escaparHtml(a.def.rotulo)}${a.valor === null ? '' : `: <strong>${escaparHtml(a.valor)}</strong>`}</span>
+          <button type="button" class="chip-filtro-x" data-indice="${i}" aria-label="Remover filtro ${escaparHtml(a.def.rotulo)}">&times;</button>
+        </span>`).join('')
+      + '<button type="button" class="chip-filtro-limpar">Limpar tudo</button>';
+    alvo.querySelectorAll('.chip-filtro-x').forEach(btn => {
+      btn.addEventListener('click', () => {
+        limparCampoFiltro_(ativos[Number(btn.dataset.indice)].def);
+        aoAlterar();
+      });
+    });
+    alvo.querySelector('.chip-filtro-limpar').addEventListener('click', () => {
+      defs.forEach(limparCampoFiltro_);
+      aoAlterar();
+    });
+  }
+
+  /** Busca livre que aplica sozinha: ao parar de digitar (esperaMs) ou no Enter. */
+  function ligarBuscaAutomatica(inputId, aplicar, esperaMs) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    let temporizador = null;
+    input.addEventListener('input', () => {
+      clearTimeout(temporizador);
+      temporizador = setTimeout(aplicar, esperaMs || 700);
+    });
+    input.addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      clearTimeout(temporizador);
+      aplicar();
+    });
+  }
+
   return {
+    renderizarChipsFiltros, ligarBuscaAutomatica,
     escaparHtml, mostrarCarregando, esconderCarregando, toast, abrirModal, fecharModal, aoFecharModal, modalFoiEditado, mostrarErro, lerArquivoBase64,
     formatarMoeda, parseValorBr, lerValorCampo, validarCamposMoeda, formatarData, formatarDataBr, rotuloPerfil, calcularPrazoContratoUnidade, corAlertaPrazo,
     listaCompetencias, listaAnos, opcoesCompetenciaHtml, opcoesTamanhoPaginaHtml, tornarPesquisavel,
