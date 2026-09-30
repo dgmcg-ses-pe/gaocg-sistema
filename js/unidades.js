@@ -54,33 +54,30 @@ const TelaUnidades = (function () {
     opcoesObjetoUnidades_ = opcoesObjeto;
     todasUnidades = todasUnidadesCarregadas.items;
     const container = document.getElementById('conteudo');
+    // Mesmo layout de barra de SOF/Notas de Empenho/Recibos (sessão
+    // 2026-09-30) - ver comentário em render() de js/recibos.js.
     container.innerHTML = `
-      <h2 class="titulo-tela">Unidades</h2>
-      <div class="painel">
-        <div class="barra-filtros">
-          <div class="campo campo-tamanho-pagina"><label>Itens por página</label>
-            <select id="uniTamanhoPaginaTopo">${UI.opcoesTamanhoPaginaHtml(tamanhoPagina === TAMANHO_PAGINA_TODOS_ ? 'todos' : tamanhoPagina)}</select>
-          </div>
-          <div class="campo campo-busca-livre"><label>Busca livre</label>
-            <input type="text" id="uniBusca" placeholder="nome, OSS, CNPJ..." /><button type="button" class="busca-livre-x" data-alvo="uniBusca" title="Limpar busca livre">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">Unidade</label>
-            <div id="uniFiltroUnidade"></div><button type="button" class="filtro-multiplo-x" data-alvo="uniFiltroUnidade" title="Limpar filtro de Unidade">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">Tipo</label>
-            <div id="uniFiltroTipo"></div><button type="button" class="filtro-multiplo-x" data-alvo="uniFiltroTipo" title="Limpar filtro de Tipo">&times;</button>
-          </div>
-          <div class="campo campo-filtro-multiplo"><label style="width:100%">OSS</label>
-            <div id="uniFiltroOss"></div><button type="button" class="filtro-multiplo-x" data-alvo="uniFiltroOss" title="Limpar filtro de OSS">&times;</button>
-          </div>
-          <label style="align-self:center;font-size:13px;white-space:nowrap"><input type="checkbox" id="chkSomenteAtivas" checked /> Somente ativas</label>
-          <button class="botao" id="btnFiltrarUni">Filtrar</button>
-          <button class="botao botao-limpar-filtros" id="btnLimparFiltrosUni">Limpar filtros</button>
-          <span style="flex:1"></span>
-          <button class="botao" id="btnGerarRelatorioUni">Gerar Relatório</button>
-          <button class="botao" id="btnModoSelecaoLoteUni">Apagar cards</button>
+      <div class="cabecalho-tela">
+        <h2 class="titulo-tela">Unidades</h2>
+        <div class="acoes-tela">
+          <button class="botao" id="btnGerarRelatorioUni">Gerar relatório</button>
+          <button class="botao" id="btnModoSelecaoLoteUni" title="Marcar várias unidades para excluir de uma vez">Selecionar para excluir</button>
           <button class="botao primario" id="btnNovaUnidade">+ Nova unidade</button>
         </div>
+      </div>
+      <div class="painel">
+        <div class="barra-filtros">
+          <div class="campo campo-busca-livre"><label for="uniBusca">Busca livre</label>
+            <input type="text" id="uniBusca" placeholder="Nome, OSS, CNPJ, contrato de gestão..." />
+          </div>
+          <div class="campo campo-filtro-multiplo"><label>Unidade</label><div id="uniFiltroUnidade"></div></div>
+          <div class="campo campo-filtro-multiplo"><label>Tipo de unidade</label><div id="uniFiltroTipo"></div></div>
+          <div class="campo campo-filtro-multiplo"><label>OSS</label><div id="uniFiltroOss"></div></div>
+          <div class="campo campo-checkbox-filtro">
+            <label class="rotulo-checkbox"><input type="checkbox" id="chkSomenteAtivas" checked /> Somente ativas</label>
+          </div>
+        </div>
+        <div class="filtros-ativos oculto" id="uniFiltrosAtivos"></div>
         <p class="ajuda legenda-prazo-unidades">
           Cor do prazo do contrato no card: <span class="selo verde">Verde</span> tranquilo, mais de 180 dias ·
           <span class="selo amarelo">Amarelo</span> atenção, até 180 dias ·
@@ -108,21 +105,37 @@ const TelaUnidades = (function () {
       atualizarBarraSelecaoLote_();
       renderCards();
     });
-    // Seletor "Itens por página" duplicado no topo - ver mesma explicação em js/sof.js.
-    document.getElementById('uniTamanhoPaginaTopo').addEventListener('change', function () { mudarTamanhoPagina_(this.value); });
-    document.getElementById('chkSomenteAtivas').addEventListener('change', () => { paginaAtual = 1; carregar(); });
-    document.getElementById('btnFiltrarUni').addEventListener('click', () => { if (filtrosMudaram_()) { paginaAtual = 1; carregar(); } });
-    document.getElementById('uniBusca').addEventListener('keydown', e => { if (e.key === 'Enter' && filtrosMudaram_()) { paginaAtual = 1; carregar(); } });
+    document.getElementById('chkSomenteAtivas').addEventListener('change', aplicarFiltros_);
+    UI.ligarBuscaAutomatica('uniBusca', aplicarFiltros_);
     // Opções INICIAIS - a partir da primeira carga elas vêm das facetas do
     // backend (ver FACETAS_UNI_/aplicarResposta_). Substitui o estreitamento
-    // antigo, que rodava no clique do checkbox.
-    UI.criarFiltroMultiplo('uniFiltroUnidade', todasUnidades.map(u => ({ valor: u.id, rotulo: u.nome })));
-    UI.criarFiltroMultiplo('uniFiltroTipo', OPCOES_TIPO);
-    UI.criarFiltroMultiplo('uniFiltroOss', opcoesOss.map(o => o.valor));
-    UI.ligarLimpezaFiltros('.barra-filtros', 'btnLimparFiltrosUni', () => {
-      if (filtrosMudaram_()) { paginaAtual = 1; carregar(); }
-    }, aoLimparFiltroIndividual_);
+    // antigo, que rodava no clique do checkbox. O 4º argumento aplica o
+    // filtro quando o dropdown fecha com a seleção alterada.
+    UI.criarFiltroMultiplo('uniFiltroUnidade', todasUnidades.map(u => ({ valor: u.id, rotulo: u.nome })), null, aplicarFiltros_);
+    UI.criarFiltroMultiplo('uniFiltroTipo', OPCOES_TIPO, null, aplicarFiltros_);
+    UI.criarFiltroMultiplo('uniFiltroOss', opcoesOss.map(o => o.valor), null, aplicarFiltros_);
     await carregar();
+  }
+
+  /** Aplica os filtros da barra (ao fechar um dropdown, parar de digitar na busca, mudar "Somente ativas" ou remover um chip). */
+  function aplicarFiltros_() {
+    if (!filtrosMudaram_()) { renderChipsFiltros_(); return; }
+    paginaAtual = 1;
+    carregar().catch(err => UI.toast(err.message, 'erro'));
+  }
+
+  // "Somente ativas" fica de fora dos chips de propósito: vem marcado por
+  // padrão (é o modo normal da tela, não um filtro que alguém aplicou), e o
+  // "Limpar tudo" não deve passar a mostrar as unidades inativas.
+  const CHIPS_UNI_ = [
+    { id: 'uniBusca', rotulo: 'Busca', tipo: 'texto' },
+    { id: 'uniFiltroUnidade', rotulo: 'Unidade', tipo: 'multiplo' },
+    { id: 'uniFiltroTipo', rotulo: 'Tipo de unidade', tipo: 'multiplo' },
+    { id: 'uniFiltroOss', rotulo: 'OSS', tipo: 'multiplo' }
+  ];
+
+  function renderChipsFiltros_() {
+    UI.renderizarChipsFiltros('uniFiltrosAtivos', CHIPS_UNI_, aplicarFiltros_);
   }
 
   function filtrosAtuais() {
@@ -152,25 +165,6 @@ const TelaUnidades = (function () {
     } catch (e) { /* pré-carga é best-effort */ }
   }
 
-  /** Chave de filtrosAtuais() correspondente a cada id de filtro-multiplo (ou de Busca livre) da barra - ver aoLimparFiltroIndividual_. */
-  const CHAVE_POR_FILTRO_ = { uniFiltroUnidade: 'unidade_id', uniFiltroTipo: 'tipo', uniFiltroOss: 'oss', uniBusca: 'busca' };
-
-  /**
-   * "x" individual de um filtro (múltipla escolha ou Busca livre): recarrega
-   * usando o último filtro realmente aplicado (ultimoFiltroJson), só com
-   * este campo zerado por cima - ver mesma função em js/sof.js para a
-   * explicação completa. Busca livre zera pra string vazia (é texto, não
-   * lista de valores como os demais).
-   */
-  function aoLimparFiltroIndividual_(idCampo) {
-    const chave = CHAVE_POR_FILTRO_[idCampo];
-    if (!chave) return;
-    const aplicado = ultimoFiltroJson ? JSON.parse(ultimoFiltroJson) : {};
-    const filtros = Object.assign({}, aplicado, { [chave]: chave === 'busca' ? '' : [] });
-    paginaAtual = 1;
-    carregarComFiltros_(filtros);
-  }
-
   /** Evita reler a lista/mostrar o spinner quando Filtrar/Limpar filtros/"x" não mudam nada de fato. */
   function filtrosMudaram_() {
     return JSON.stringify(filtrosAtuais()) !== ultimoFiltroJson;
@@ -180,14 +174,26 @@ const TelaUnidades = (function () {
     await carregarComFiltros_(filtrosAtuais());
   }
 
+  // Número da carga mais recente - ver mesma variável em js/recibos.js.
+  let seqCarga_ = 0;
+
   async function carregarComFiltros_(filtros) {
+    const minha = ++seqCarga_;
     ultimoFiltroJson = JSON.stringify(filtros);
+    renderChipsFiltros_();
     const params = Object.assign({ page: paginaAtual, pageSize: tamanhoPagina }, filtros);
-    const resposta = await CacheAbas.comRevalidacao('unidades', params,
-      (opcoes) => Api.chamar('listarUnidades', params, opcoes),
-      aplicarResposta_
-    );
-    aplicarResposta_(resposta);
+    const lista = document.getElementById('listaUnidades');
+    if (lista) lista.classList.add('lista-atualizando');
+    try {
+      const resposta = await CacheAbas.comRevalidacao('unidades', params,
+        (opcoes) => Api.chamar('listarUnidades', params, Object.assign({ semSpinner: true }, opcoes)),
+        (dados) => { if (minha === seqCarga_) aplicarResposta_(dados); }
+      );
+      if (minha === seqCarga_) aplicarResposta_(resposta);
+    } finally {
+      const listaAgora = document.getElementById('listaUnidades');
+      if (minha === seqCarga_ && listaAgora) listaAgora.classList.remove('lista-atualizando');
+    }
   }
 
   /** id do widget -> dimensão no mapa de facetas (ver UI.aplicarFacetas). */
@@ -205,14 +211,10 @@ const TelaUnidades = (function () {
     renderPaginacao();
   }
 
-  /** Muda tamanhoPagina a partir de qualquer um dos dois seletores (topo/embaixo) e sincroniza o outro - ver mesma função em js/sof.js. */
+  /** Muda tamanhoPagina pelo seletor "Por página" do rodapé (o do topo saiu na sessão 2026-09-30). */
   function mudarTamanhoPagina_(valorSelecionado) {
     tamanhoPagina = valorSelecionado === 'todos' ? TAMANHO_PAGINA_TODOS_ : Number(valorSelecionado);
     paginaAtual = 1;
-    ['uniTamanhoPaginaTopo', 'uniTamanhoPagina'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.value = valorSelecionado;
-    });
     carregar();
   }
 
