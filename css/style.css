@@ -940,3 +940,62 @@ input.rel-input { min-width: 220px; flex: 1; }
   border-radius: 6px; font-size: 11px; line-height: 1.4; white-space: pre-wrap; word-break: break-word;
   max-height: 260px; overflow-y: auto;
 }
+
+/* ===== Fluxograma GAOCG (sessão 2026-10-06) - ver js/fluxograma.js ===== */
+.fx-painel { display: flex; flex-direction: column; gap: 10px; }
+#fxSeletor { max-width: 340px; width: 100%; }
+.fx-trilha { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 13px; }
+.fx-trilha-item {
+  border: none; background: none; padding: 2px 4px; border-radius: 6px; cursor: pointer;
+  color: var(--azul); font: inherit; text-decoration: underline; text-underline-offset: 2px;
+}
+.fx-trilha-item:hover { background: var(--azul-claro); }
+.fx-trilha-sep { color: var(--cinza-500); }
+.fx-trilha-atual { font-weight: 600; color: var(--cinza-900); padding: 2px 4px; }
+.fx-barra { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.fx-barra-espaco { flex: 1; }
+.fx-barra .botao:disabled { opacity: .5; cursor: default; }
+.fx-dica { margin: 0; }
+.fx-corpo { position: relative; }
+.fx-area {
+  position: relative; height: calc(100vh - 290px); min-height: 380px; overflow: hidden;
+  border: 1px solid var(--cinza-200); border-radius: 10px;
+  background: #fff; /* o diagrama do Bizagi tem cores próprias - fica sempre sobre "papel" branco, inclusive no tema escuro */
+  touch-action: none; cursor: grab; user-select: none;
+}
+.fx-area.fx-arrastando { cursor: grabbing; }
+.fx-area.fx-carregando { opacity: .5; }
+.fx-area > svg { display: block; width: 100%; height: 100%; }
+.fx-area .estado-vazio { color: #6b7280; }
+.fx-area .fx-rotulo { pointer-events: none; } /* texto do Bizagi por cima do bloco - o clique passa pro bloco de baixo */
+.fx-area .fx-clicavel { cursor: pointer; }
+.fx-area .fx-clicavel:hover > .djs-visual { filter: drop-shadow(0 0 4px rgba(44, 79, 191, .75)); }
+.fx-area .fx-subprocesso > .djs-visual { filter: drop-shadow(0 0 2px rgba(44, 79, 191, .45)); }
+.fx-area .fx-fim:hover > .djs-visual { filter: drop-shadow(0 0 6px rgba(193, 51, 39, .9)); }
+.fx-area .fx-destaque > .djs-visual { animation: fx-pulso 1.2s ease-in-out 4; filter: drop-shadow(0 0 7px rgba(245, 158, 11, 1)); }
+@keyframes fx-pulso {
+  0%, 100% { filter: drop-shadow(0 0 7px rgba(245, 158, 11, 1)); }
+  50% { filter: drop-shadow(0 0 14px rgba(245, 158, 11, .35)); }
+}
+.fx-detalhe {
+  position: absolute; top: 10px; right: 10px; width: min(360px, calc(100% - 20px)); max-height: calc(100% - 20px); overflow-y: auto;
+  background: var(--superficie, var(--branco)); color: var(--cinza-900); border: 1px solid var(--cinza-200); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .18); padding: 14px 16px; font-size: 13px; line-height: 1.5;
+}
+.fx-detalhe h3 { margin: 2px 28px 8px 0; font-size: 15px; }
+.fx-detalhe h4 { margin: 12px 0 4px; font-size: 13px; }
+.fx-detalhe p { margin: 0 0 8px; }
+.fx-detalhe ul { margin: 0; padding-left: 18px; }
+.fx-detalhe-tipo { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--cinza-500); }
+.fx-detalhe-fechar {
+  position: absolute; top: 8px; right: 8px; width: 28px; height: 28px; border: none; border-radius: 6px;
+  background: none; color: var(--cinza-500); font-size: 20px; line-height: 1; cursor: pointer;
+}
+.fx-detalhe-fechar:hover { background: var(--cinza-100); color: var(--cinza-900); }
+.fx-chamadores { display: flex; flex-direction: column; gap: 6px; }
+.fx-chamadores .botao { text-align: left; white-space: normal; }
+
+@media (max-width: 720px) {
+  .fx-area { height: calc(100vh - 330px); min-height: 320px; }
+  .fx-barra .fx-barra-espaco { display: none; }
+}

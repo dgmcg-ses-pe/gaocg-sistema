@@ -1238,6 +1238,7 @@ const App = (function () {
     recibos: (opts) => TelaRecibos.render(opts),
     unidades: () => TelaUnidades.render(),
     metasProcessos: () => TelaMetasProcessos.render(),
+    fluxograma: () => TelaFluxograma.render(),
     listas: () => TelaListas.render(),
     logAuditoria: () => TelaLogAuditoria.render(),
     sugestoes: () => TelaSugestoes.render(),
