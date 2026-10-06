@@ -93,10 +93,10 @@ const TelaRecibos = (function () {
   }
 
   /** Semeia as N parcelas fixas de um Recibo dividido de Contrato de Gestão (TES) - hoje 70%/30% (PARCELA_DIVIDIDA_TES_PERCENTUAIS). `dadosPorPercentual` (opcional) - ex. `{70: {...}}` - pré-popula a parcela daquele percentual (usado ao converter um Recibo avulso já existente). */
-  function semearParcelasTes_(containerId, obterNotaEmpenho, dadosPorPercentual) {
+  function semearParcelasTes_(containerId, ctx, dadosPorPercentual) {
     PARCELA_DIVIDIDA_TES_PERCENTUAIS.forEach(percentual => {
       const dadosExistentes = dadosPorPercentual && dadosPorPercentual[percentual];
-      adicionarLinhaParcelaDividida_(containerId, obterNotaEmpenho, dadosExistentes, { percentualFixo: percentual });
+      adicionarLinhaParcelaDividida_(containerId, ctx, dadosExistentes, { percentualFixo: percentual });
     });
   }
 
@@ -904,10 +904,14 @@ const TelaRecibos = (function () {
    * (opcional) é chamado toda vez que o anexo é lido ou removido, pra quem
    * precisa reagir (ex.: essa mesma tabela, quando a LE muda).
    */
-  function ligarAnexoComOcr_({ inputEl, tipo, obterNotaEmpenho, valorInputEl, aoAtualizar }) {
+  function ligarAnexoComOcr_({ inputEl, tipo, obterNotaEmpenho, valorInputEl, aoAtualizar, conferirLeitura, valorSempreTravado, obterCompetencia }) {
     const statusEl = document.createElement('p');
     statusEl.className = 'ajuda anexo-ocr-status oculto';
     inputEl.insertAdjacentElement('afterend', statusEl);
+    // valorSempreTravado (sessão 2026-10-06, pedido do usuário): Valor
+    // Liquidado nunca é digitado - só a LE preenche. Sem anexo, fica vazio e
+    // somente leitura; "Remover anexo" limpa mas não destrava.
+    if (valorSempreTravado) valorInputEl.readOnly = true;
 
     function travar(valor, existente, numeroDocumento) {
       valorInputEl.value = valor;
@@ -917,7 +921,7 @@ const TelaRecibos = (function () {
       statusEl.innerHTML = '🔒 Valor lido do documento. <a href="#" class="anexo-ocr-remover">Remover anexo</a>';
       statusEl.querySelector('.anexo-ocr-remover').addEventListener('click', function (e) {
         e.preventDefault();
-        valorInputEl.readOnly = false;
+        valorInputEl.readOnly = !!valorSempreTravado;
         valorInputEl.value = '';
         inputEl.value = '';
         inputEl._anexoValidado = null;
@@ -942,8 +946,10 @@ const TelaRecibos = (function () {
         if (arquivo.size > 8 * 1024 * 1024) throw new Error('Arquivo muito grande (máximo 8MB).');
         const base64 = await UI.lerArquivoBase64(arquivo);
         const resultado = await Api.chamar('lerAnexoRecibo', {
-          tipo, arquivoBase64: base64, arquivoNome: arquivo.name, arquivoTipo: arquivo.type, notaEmpenhoEsperada: notaEmpenho
+          tipo, arquivoBase64: base64, arquivoNome: arquivo.name, arquivoTipo: arquivo.type, notaEmpenhoEsperada: notaEmpenho,
+          competenciaEsperada: obterCompetencia ? obterCompetencia() : ''
         });
+        if (conferirLeitura && !conferirLeitura(resultado)) { inputEl.value = ''; return; }
         inputEl._anexoValidado = { base64, nome: arquivo.name, tipo: arquivo.type };
         inputEl.dataset.removerExistente = '';
         travar(resultado.valor, false, resultado.numero_documento);
@@ -955,6 +961,71 @@ const TelaRecibos = (function () {
     });
 
     return { travar };
+  }
+
+  /**
+   * Conferências de uma Nota de Liquidação recém lida, antes de aceitar o
+   * anexo (sessão 2026-10-06, pedido do usuário). Devolve false se o usuário
+   * desistir em alguma pergunta - quem chama descarta o anexo.
+   *
+   * 1. Competência: a do documento (`resultado.competencia`, extraída da
+   *    OBSERVAÇÃO da LE - ver extrairCompetenciaLe_ em Recibos.gs) contra o
+   *    campo Competência do formulário. Diferente: bloqueia, sem pergunta.
+   *    Recibo ainda sem competência: preenche com a da LE. LE sem competência
+   *    legível: só avisa (texto livre, nem toda LE traz).
+   * 2. Percentual (só parcela dividida, `percentual` informado): o valor da LE
+   *    tem que ser `percentual`% da Parcela Contratual (base = parcela
+   *    contratual inteira, não a soma das parcelas). Acima ou abaixo (mais de
+   *    R$ 0,01, folga pro arredondamento de centavo): mostra a parcela
+   *    contratual e pergunta se continua.
+   *
+   * `ctx` = { competenciaId, parcelaContratualId } do formulário aberto.
+   */
+  function confirmarLeituraLe_(resultado, ctx, percentual) {
+    const selectCompetencia = document.getElementById(ctx.competenciaId);
+    const competenciaRecibo = selectCompetencia ? selectCompetencia.value.trim() : '';
+    const competenciaLe = resultado.competencia || '';
+    // Competência diferente bloqueia (pedido do usuário, igual à NE) - o
+    // backend já recusa ao receber competenciaEsperada (lerAnexoRecibo); esta
+    // é só a mesma regra repetida aqui, por segurança.
+    if (competenciaLe && competenciaRecibo && competenciaLe !== competenciaRecibo) {
+      UI.toast(`A competência da Nota de Liquidação (${competenciaLe}) não corresponde à competência do Recibo (${competenciaRecibo}).`, 'erro');
+      return false;
+    }
+
+    if (percentual) {
+      const parcelaContratual = UI.parseValorBr(document.getElementById(ctx.parcelaContratualId).value) || 0;
+      if (!parcelaContratual) {
+        UI.toast(`Parcela Contratual não preenchida - não foi possível conferir se a LE corresponde a ${percentual}% da parcela.`, 'info');
+      } else {
+        const esperado = parcelaContratual * percentual / 100;
+        const diferenca = (Number(resultado.valor) || 0) - esperado;
+        if (Math.abs(diferenca) > 0.01) {
+          const posicao = diferenca > 0 ? 'ACIMA' : 'ABAIXO';
+          const mensagem = `O valor da Nota de Liquidação está ${posicao} de ${percentual}% da parcela contratual.\n\n` +
+            `Parcela contratual: ${UI.formatarMoeda(parcelaContratual)}\n` +
+            `${percentual}% da parcela contratual: ${UI.formatarMoeda(esperado)}\n` +
+            `Valor da Nota de Liquidação: ${UI.formatarMoeda(resultado.valor)}\n` +
+            `Diferença: ${UI.formatarMoeda(Math.abs(diferenca))} ${diferenca > 0 ? 'acima' : 'abaixo'}\n\n` +
+            'Deseja anexar o documento mesmo assim?';
+          if (!confirm(mensagem)) return false;
+        }
+      }
+    }
+
+    // Só mexe no formulário depois de todas as perguntas - se o usuário
+    // desistir no meio, nada fica alterado.
+    if (!competenciaLe) {
+      UI.toast('Não foi possível identificar a competência na Nota de Liquidação - confira manualmente.', 'info');
+    } else if (!competenciaRecibo && selectCompetencia) {
+      if (!Array.from(selectCompetencia.options).some(o => o.value === competenciaLe)) {
+        selectCompetencia.insertAdjacentHTML('beforeend', `<option>${UI.escaparHtml(competenciaLe)}</option>`);
+      }
+      selectCompetencia.value = competenciaLe;
+      UI.tornarPesquisavel(selectCompetencia);
+      UI.toast(`Competência preenchida com a da Nota de Liquidação (${competenciaLe}).`, 'info');
+    }
+    return true;
   }
 
   // ===================== NOVO RECIBO (com ou sem parcela dividida) =====================
@@ -997,7 +1068,7 @@ const TelaRecibos = (function () {
         </div>
 
         <div id="blocoParcelaUnica" class="grade-2">
-          <div class="campo"><label>Valor Liquidado</label><input id="recValorLiquidado" type="text" inputmode="decimal" class="campo-moeda" /></div>
+          <div class="campo"><label>Valor Liquidado</label><input id="recValorLiquidado" type="text" inputmode="decimal" class="campo-moeda" readonly placeholder="Preenchido ao anexar a LE" /></div>
           <div class="campo"><label>Nota de Liquidação (anexo)</label><input type="file" id="recNotaLiquidacaoArquivo" accept=".pdf,image/*" /></div>
           <div class="campo"><label>Valor Pago</label><input id="recValorPago" type="text" inputmode="decimal" class="campo-moeda" /></div>
           <div class="campo"><label>Ordem Bancária (anexo)</label><input type="file" id="recOrdemBancariaArquivo" accept=".pdf,image/*" /></div>
@@ -1073,12 +1144,17 @@ const TelaRecibos = (function () {
       UI.tornarPesquisavel('recStatus');
     });
 
-    const obterNotaEmpenhoNovo_ = () => document.getElementById('recNotaEmpenho').value;
+    const ctxNovo = {
+      obterNotaEmpenho: () => document.getElementById('recNotaEmpenho').value,
+      competenciaId: 'recCompetencia', parcelaContratualId: 'recParcelaContratual',
+      obterCompetencia: () => document.getElementById('recCompetencia').value.trim()
+    };
+    const obterNotaEmpenhoNovo_ = ctxNovo.obterNotaEmpenho;
     document.getElementById('recTemParcelaDividida').addEventListener('change', function () {
       document.getElementById('blocoParcelaUnica').classList.toggle('oculto', this.checked);
       document.getElementById('blocoComParcelaDividida').classList.toggle('oculto', !this.checked);
       if (this.checked && !document.getElementById('linhasParcelaDividida').children.length) {
-        semearParcelasTes_('linhasParcelaDividida', obterNotaEmpenhoNovo_);
+        semearParcelasTes_('linhasParcelaDividida', ctxNovo);
       }
     });
     document.getElementById('btnCancelarRec').addEventListener('click', UI.fecharModal);
@@ -1086,7 +1162,9 @@ const TelaRecibos = (function () {
 
     ligarAnexoComOcr_({
       inputEl: document.getElementById('recNotaLiquidacaoArquivo'), tipo: 'nota_liquidacao',
-      obterNotaEmpenho: obterNotaEmpenhoNovo_, valorInputEl: document.getElementById('recValorLiquidado')
+      obterNotaEmpenho: obterNotaEmpenhoNovo_, valorInputEl: document.getElementById('recValorLiquidado'),
+      conferirLeitura: resultado => confirmarLeituraLe_(resultado, ctxNovo), valorSempreTravado: true,
+      obterCompetencia: ctxNovo.obterCompetencia
     });
     ligarAnexoComOcr_({
       inputEl: document.getElementById('recOrdemBancariaArquivo'), tipo: 'ordem_bancaria',
@@ -1146,7 +1224,8 @@ const TelaRecibos = (function () {
    * padronização). Valor Pago é sempre somente leitura, somado
    * automaticamente a partir da tabela.
    */
-  function adicionarLinhaParcelaDividida_(containerId, obterNotaEmpenho, dadosExistentes, opts) {
+  function adicionarLinhaParcelaDividida_(containerId, ctx, dadosExistentes, opts) {
+    const obterNotaEmpenho = ctx.obterNotaEmpenho;
     contadorLinhasParcelaDividida++;
     const id = contadorLinhasParcelaDividida;
     const jaSalva = !!(dadosExistentes && dadosExistentes.id);
@@ -1160,7 +1239,7 @@ const TelaRecibos = (function () {
       <div class="linha-parcela-dividida-corpo">
         <div class="grade-3">
           <div class="campo"><label>Percentual (%)</label><input type="text" inputmode="decimal" class="pd-percentual campo-moeda" value="${valorPercentual}" ${percentualFixo ? 'readonly' : ''} /></div>
-          <div class="campo"><label>Valor Liquidado</label><input type="text" inputmode="decimal" class="pd-liquidado campo-moeda" value="${dadosExistentes && dadosExistentes.valor_liquidado ? dadosExistentes.valor_liquidado : ''}" /></div>
+          <div class="campo"><label>Valor Liquidado</label><input type="text" inputmode="decimal" class="pd-liquidado campo-moeda" value="${dadosExistentes && dadosExistentes.valor_liquidado ? dadosExistentes.valor_liquidado : ''}" readonly placeholder="Preenchido ao anexar a LE" /></div>
           <div class="campo"><label>Valor Pago (soma automática)</label><input type="text" inputmode="decimal" class="pd-pago campo-moeda" value="${dadosExistentes && dadosExistentes.valor_pago ? dadosExistentes.valor_pago : ''}" readonly /></div>
         </div>
         <div class="campo pd-ob-bloco">
@@ -1220,7 +1299,8 @@ const TelaRecibos = (function () {
         if (arquivo.size > 8 * 1024 * 1024) throw new Error('Arquivo muito grande (máximo 8MB).');
         const base64 = await UI.lerArquivoBase64(arquivo);
         const resultado = await Api.chamar('lerAnexoRecibo', {
-          tipo: 'nota_liquidacao', arquivoBase64: base64, arquivoNome: arquivo.name, arquivoTipo: arquivo.type, notaEmpenhoEsperada: notaEmpenho
+          tipo: 'nota_liquidacao', arquivoBase64: base64, arquivoNome: arquivo.name, arquivoTipo: arquivo.type, notaEmpenhoEsperada: notaEmpenho,
+          competenciaEsperada: ctx.obterCompetencia()
         });
         // Duplicidade (sessão 2026-08-13, pedido do usuário): aviso na hora,
         // olhando TODAS as parcelas na tela (não só esta linha) - o backend
@@ -1230,6 +1310,8 @@ const TelaRecibos = (function () {
           UI.toast('A Nota de Liquidação nº ' + resultado.numero_documento + ' já foi anexada a este processo.', 'erro');
           return;
         }
+        const percentualLinha = UI.parseValorBr(div.querySelector('.pd-percentual').value) || 0;
+        if (!confirmarLeituraLe_(resultado, ctx, percentualLinha)) return;
         div._notaLiquidacao = {
           numero: resultado.numero_documento || '',
           _base64: base64, _nome: arquivo.name, _tipo: arquivo.type
@@ -1596,7 +1678,7 @@ const TelaRecibos = (function () {
         </div>
 
         <div id="blocoParcelaUnicaEd" class="grade-2 ${grupoId ? 'oculto' : ''}">
-          <div class="campo"><label>Valor Liquidado</label><input id="recEdValorLiquidado" type="text" inputmode="decimal" class="campo-moeda" value="${recibo.valor_liquidado}" /></div>
+          <div class="campo"><label>Valor Liquidado</label><input id="recEdValorLiquidado" type="text" inputmode="decimal" class="campo-moeda" value="${recibo.valor_liquidado}" readonly placeholder="Preenchido ao anexar a LE" /></div>
           <div class="campo"><label>Nota de Liquidação (anexo)</label><input type="file" id="recEdNotaLiquidacaoArquivo" accept=".pdf,image/*" />${recibo.nota_liquidacao_url ? `<p class="ajuda"><a href="${UI.escaparHtml(recibo.nota_liquidacao_url)}" target="_blank" rel="noopener" class="botao">Ver arquivo atual</a></p>` : ''}</div>
           <div class="campo"><label>Valor Pago</label><input id="recEdValorPago" type="text" inputmode="decimal" class="campo-moeda" value="${recibo.valor_pago}" /></div>
           <div class="campo"><label>Ordem Bancária (anexo)</label><input type="file" id="recEdOrdemBancariaArquivo" accept=".pdf,image/*" />${recibo.ordem_bancaria_arquivo_url ? `<p class="ajuda"><a href="${UI.escaparHtml(recibo.ordem_bancaria_arquivo_url)}" target="_blank" rel="noopener" class="botao">Ver arquivo atual</a></p>` : ''}</div>
@@ -1640,10 +1722,17 @@ const TelaRecibos = (function () {
       if (!grupoId) atualizarVisibilidadeParcelaDivididaTes_('recEdBlocoTemParcelaDividida', 'recEdTemParcelaDividida', 'blocoParcelaUnicaEd', 'blocoComParcelaDivididaEd', 'linhasParcelaDivididaEd', this.value);
     });
 
-    const obterNotaEmpenhoEd_ = () => document.getElementById('recEdNotaEmpenho').value;
+    const ctxEd = {
+      obterNotaEmpenho: () => document.getElementById('recEdNotaEmpenho').value,
+      competenciaId: 'recEdCompetencia', parcelaContratualId: 'recEdParcelaContratual',
+      obterCompetencia: () => document.getElementById('recEdCompetencia').value.trim()
+    };
+    const obterNotaEmpenhoEd_ = ctxEd.obterNotaEmpenho;
     const anexoNl = ligarAnexoComOcr_({
       inputEl: document.getElementById('recEdNotaLiquidacaoArquivo'), tipo: 'nota_liquidacao',
-      obterNotaEmpenho: obterNotaEmpenhoEd_, valorInputEl: document.getElementById('recEdValorLiquidado')
+      obterNotaEmpenho: obterNotaEmpenhoEd_, valorInputEl: document.getElementById('recEdValorLiquidado'),
+      conferirLeitura: resultado => confirmarLeituraLe_(resultado, ctxEd), valorSempreTravado: true,
+      obterCompetencia: ctxEd.obterCompetencia
     });
     if (recibo.nota_liquidacao_url) anexoNl.travar(recibo.valor_liquidado, true, recibo.nota_liquidacao_numero);
     const anexoOb = ligarAnexoComOcr_({
@@ -1662,7 +1751,7 @@ const TelaRecibos = (function () {
     // (PARCELA_DIVIDIDA_TES_PERCENTUAL_MULTI_OB) com a tabela de OBs.
     if (grupoId) {
       const grupoEhTes = ehObjetoContratoGestaoTes_(recibo.objeto);
-      siblingsGrupo.forEach(s => adicionarLinhaParcelaDividida_('linhasParcelaDivididaEd', obterNotaEmpenhoEd_, s,
+      siblingsGrupo.forEach(s => adicionarLinhaParcelaDividida_('linhasParcelaDivididaEd', ctxEd, s,
         grupoEhTes ? { percentualFixo: Number(s.percentual_parcela_dividida) } : undefined));
     }
     document.getElementById('recEdTemParcelaDividida').addEventListener('change', function () {
@@ -1676,7 +1765,7 @@ const TelaRecibos = (function () {
         // já tinha, inclusive uma eventual OB única legada migrada pra
         // tabela - ver adicionarLinhaParcelaDividida_), e a(s) outra(s)
         // nascem em branco.
-        semearParcelasTes_('linhasParcelaDivididaEd', obterNotaEmpenhoEd_, {
+        semearParcelasTes_('linhasParcelaDivididaEd', ctxEd, {
           [PARCELA_DIVIDIDA_TES_PERCENTUAL_MULTI_OB]: {
             id: recibo.id, percentual_parcela_dividida: PARCELA_DIVIDIDA_TES_PERCENTUAL_MULTI_OB,
             valor_liquidado: recibo.valor_liquidado, valor_pago: recibo.valor_pago,
@@ -1686,7 +1775,7 @@ const TelaRecibos = (function () {
         });
       }
     });
-    document.getElementById('btnAddParcelaDivididaEd').addEventListener('click', () => adicionarLinhaParcelaDividida_('linhasParcelaDivididaEd', obterNotaEmpenhoEd_));
+    document.getElementById('btnAddParcelaDivididaEd').addEventListener('click', () => adicionarLinhaParcelaDividida_('linhasParcelaDivididaEd', ctxEd));
 
     document.getElementById('btnCancelarRecEd').addEventListener('click', UI.fecharModal);
     document.getElementById('btnSalvarRecEd').addEventListener('click', () => salvarReciboEdicao(recibo));
