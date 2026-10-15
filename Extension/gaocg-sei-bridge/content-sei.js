@@ -2438,21 +2438,32 @@ function esconderOverlayLote_() {
 /* ============ liga/desliga das janelas de anexo e anotação (popup) ============
  *
  * 2026-10-15, pedido do usuário: o painel da extensão (popup.html/popup.js) tem
- * um botão que desliga as janelas "Envio em lote" e "Anotação do processo",
- * deixando só o envio de SOF (que não depende disto e segue sempre ativo).
- * Ausente no storage = ativo, o comportamento de antes desta opção existir.
+ * um botão para cada janela - "Envio em lote" (anexação de arquivos) e
+ * "Anotação do processo" -, deixando, com as duas desligadas, só o envio de
+ * SOF (que não depende disto e segue sempre ativo). Ausente no storage =
+ * ativo, o comportamento de antes desta opção existir.
  * Desligar só ESCONDE (display:none) em vez de remover: um lote em andamento
  * segue atualizando o próprio painel, e religar não perde o que já estava
  * digitado na anotação.
+ *
+ * Migração: na v0.49.0 a chave de anexos (ferramentasSeiAtivas) desligava as
+ * duas janelas. Sem chave própria salva, a anotação herda esse valor - quem
+ * já tinha desligado não vê a anotação reaparecer na atualização.
  */
 const CHAVE_FERRAMENTAS_SEI_ = "ferramentasSeiAtivas";
+const CHAVE_ANOTACAO_SEI_ = "anotacaoSeiAtiva";
 let ferramentasSeiAtivas_ = true;
+let anotacaoSeiAtiva_ = true;
+
+function lerPreferenciasFerramentas_(dados) {
+  ferramentasSeiAtivas_ = dados[CHAVE_FERRAMENTAS_SEI_] !== false;
+  anotacaoSeiAtiva_ = (CHAVE_ANOTACAO_SEI_ in dados) ? dados[CHAVE_ANOTACAO_SEI_] !== false : ferramentasSeiAtivas_;
+}
 
 async function carregarPreferenciaFerramentas_() {
   try {
-    const dados = await chrome.storage.local.get(CHAVE_FERRAMENTAS_SEI_);
-    ferramentasSeiAtivas_ = dados[CHAVE_FERRAMENTAS_SEI_] !== false;
-  } catch (e) { ferramentasSeiAtivas_ = true; }
+    lerPreferenciasFerramentas_(await chrome.storage.local.get([CHAVE_FERRAMENTAS_SEI_, CHAVE_ANOTACAO_SEI_]));
+  } catch (e) { ferramentasSeiAtivas_ = true; anotacaoSeiAtiva_ = true; }
   return ferramentasSeiAtivas_;
 }
 
@@ -2462,7 +2473,7 @@ function aplicarVisibilidadeFerramentas_() {
   // retorno de progresso pro usuário) - o finally do drop chama de novo.
   if (painel) painel.style.display = (ferramentasSeiAtivas_ || gaocgLoteEmAndamento_) ? "" : "none";
   const caixa = document.getElementById(ID_CAIXA_ANOTACAO_);
-  if (caixa) caixa.style.display = ferramentasSeiAtivas_ ? "" : "none";
+  if (caixa) caixa.style.display = anotacaoSeiAtiva_ ? "" : "none";
 
   // Religado numa página de processo onde o painel ainda não existia
   // (a aba abriu com a opção desligada): cria agora.
@@ -2563,7 +2574,7 @@ if (window.top === window) {
     // redimensionamento de janela, zoom, ou a árvore lateral crescendo/
     // encolhendo, sem precisar de um listener específico pra cada caso.
     setInterval(() => {
-      if (gaocgLoteEmAndamento_ || !ferramentasSeiAtivas_) return; // pausado durante o lote - ver comentário em gaocgLoteEmAndamento_
+      if (gaocgLoteEmAndamento_ || !anotacaoSeiAtiva_) return; // pausado durante o lote - ver comentário em gaocgLoteEmAndamento_
       try { posicionarCaixaAnotacao_(); } catch (e) {}
     }, 2000);
   }
@@ -2578,9 +2589,9 @@ if (window.top === window) {
       iniciarVigilancia_();
     }
     // Botão do painel da extensão: vale na hora para esta aba.
-    if (area === "local" && mudancas[CHAVE_FERRAMENTAS_SEI_]) {
-      ferramentasSeiAtivas_ = mudancas[CHAVE_FERRAMENTAS_SEI_].newValue !== false;
-      aplicarVisibilidadeFerramentas_();
+    if (area === "local" && (mudancas[CHAVE_FERRAMENTAS_SEI_] || mudancas[CHAVE_ANOTACAO_SEI_])) {
+      // Relê as duas juntas: a anotação pode herdar a chave de anexos (migração).
+      carregarPreferenciaFerramentas_().then(aplicarVisibilidadeFerramentas_);
     }
   });
 }
