@@ -2391,6 +2391,7 @@ function criarPainelLote_() {
       avisarNaTela_("GAOCG: já tem um lote sendo enviado - espere terminar antes de soltar mais arquivos.");
       return;
     }
+    if (!ferramentasSeiAtivas_) return; // desligado pelo painel da extensão
     const arquivos = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
     if (!arquivos.length) return;
     const config = {
@@ -2402,7 +2403,7 @@ function criarPainelLote_() {
     mostrarOverlayLote_();
     processarLote_(arquivos, config, painel)
       .catch(err => avisarNaTela_("GAOCG: erro no envio em lote - " + String(err && err.message ? err.message : err)))
-      .finally(() => { processando = false; gaocgLoteEmAndamento_ = false; esconderOverlayLote_(); });
+      .finally(() => { processando = false; gaocgLoteEmAndamento_ = false; esconderOverlayLote_(); aplicarVisibilidadeFerramentas_(); });
   });
 }
 
@@ -2432,6 +2433,43 @@ function mostrarOverlayLote_() {
 function esconderOverlayLote_() {
   const overlay = document.getElementById("gaocgOverlayLote");
   if (overlay) overlay.remove();
+}
+
+/* ============ liga/desliga das janelas de anexo e anotação (popup) ============
+ *
+ * 2026-10-15, pedido do usuário: o painel da extensão (popup.html/popup.js) tem
+ * um botão que desliga as janelas "Envio em lote" e "Anotação do processo",
+ * deixando só o envio de SOF (que não depende disto e segue sempre ativo).
+ * Ausente no storage = ativo, o comportamento de antes desta opção existir.
+ * Desligar só ESCONDE (display:none) em vez de remover: um lote em andamento
+ * segue atualizando o próprio painel, e religar não perde o que já estava
+ * digitado na anotação.
+ */
+const CHAVE_FERRAMENTAS_SEI_ = "ferramentasSeiAtivas";
+let ferramentasSeiAtivas_ = true;
+
+async function carregarPreferenciaFerramentas_() {
+  try {
+    const dados = await chrome.storage.local.get(CHAVE_FERRAMENTAS_SEI_);
+    ferramentasSeiAtivas_ = dados[CHAVE_FERRAMENTAS_SEI_] !== false;
+  } catch (e) { ferramentasSeiAtivas_ = true; }
+  return ferramentasSeiAtivas_;
+}
+
+function aplicarVisibilidadeFerramentas_() {
+  const painel = document.getElementById(ID_PAINEL_LOTE_);
+  // Durante um lote o painel continua visível até terminar (é o único
+  // retorno de progresso pro usuário) - o finally do drop chama de novo.
+  if (painel) painel.style.display = (ferramentasSeiAtivas_ || gaocgLoteEmAndamento_) ? "" : "none";
+  const caixa = document.getElementById(ID_CAIXA_ANOTACAO_);
+  if (caixa) caixa.style.display = ferramentasSeiAtivas_ ? "" : "none";
+
+  // Religado numa página de processo onde o painel ainda não existia
+  // (a aba abriu com a opção desligada): cria agora.
+  if (ferramentasSeiAtivas_ && !painel && location.href.includes("procedimento_trabalhar") &&
+      acharEm_('a[title="Incluir Documento"], img[title="Incluir Documento"]')) {
+    criarPainelLote_();
+  }
 }
 
 /* ===================== inicialização (sempre por último) =====================
@@ -2512,16 +2550,20 @@ if (window.top === window) {
   // Painel de envio em lote + caixa de anotação: só fazem sentido na página
   // de um processo aberto. Espera a árvore/toolbar do processo assentar antes
   // de desenhar, pra não competir com o carregamento inicial da página.
+  // As duas só aparecem se não tiverem sido desligadas no painel da extensão
+  // (ver aplicarVisibilidadeFerramentas_).
   if (location.href.includes("procedimento_trabalhar")) {
+    const preferencia = carregarPreferenciaFerramentas_();
     aguardarCondicao_(() => acharEm_('a[title="Incluir Documento"], img[title="Incluir Documento"]'), 15000, 300)
-      .then(() => criarPainelLote_())
+      .then(() => preferencia)
+      .then(ativas => { if (ativas) criarPainelLote_(); })
       .catch(() => {});
 
     // A caixa de anotação é reposicionada (não só criada) a cada 2s - cobre
     // redimensionamento de janela, zoom, ou a árvore lateral crescendo/
     // encolhendo, sem precisar de um listener específico pra cada caso.
     setInterval(() => {
-      if (gaocgLoteEmAndamento_) return; // pausado durante o lote - ver comentário em gaocgLoteEmAndamento_
+      if (gaocgLoteEmAndamento_ || !ferramentasSeiAtivas_) return; // pausado durante o lote - ver comentário em gaocgLoteEmAndamento_
       try { posicionarCaixaAnotacao_(); } catch (e) {}
     }, 2000);
   }
@@ -2534,6 +2576,11 @@ if (window.top === window) {
   chrome.storage.onChanged.addListener((mudancas, area) => {
     if (area === "local" && mudancas[CHAVE_PENDENTE_] && mudancas[CHAVE_PENDENTE_].newValue) {
       iniciarVigilancia_();
+    }
+    // Botão do painel da extensão: vale na hora para esta aba.
+    if (area === "local" && mudancas[CHAVE_FERRAMENTAS_SEI_]) {
+      ferramentasSeiAtivas_ = mudancas[CHAVE_FERRAMENTAS_SEI_].newValue !== false;
+      aplicarVisibilidadeFerramentas_();
     }
   });
 }
