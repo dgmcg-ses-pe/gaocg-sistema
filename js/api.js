@@ -114,7 +114,11 @@ const Api = (function () {
    * dificuldade, que é quando a pré-carga menos importa.
    */
   async function requisitarComRetry_(corpo, silencioso) {
-    if (silencioso || !ACOES_REPETIVEIS_.has(corpo.action)) return requisitar_(corpo);
+    // Escrita com chave_idempotencia (hoje só criarSof, 2026-10-15) também pode
+    // repetir: o backend devolve o registro já criado em vez de criar outro
+    // (ver reservarIdempotenciaCriarSof_, backend/Sof.gs).
+    const idempotente = !!(corpo.data && corpo.data.chave_idempotencia);
+    if (silencioso || !(ACOES_REPETIVEIS_.has(corpo.action) || idempotente)) return requisitar_(corpo);
 
     for (let tentativa = 0; ; tentativa++) {
       try {

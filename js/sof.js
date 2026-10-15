@@ -504,15 +504,17 @@ const TelaSof = (function () {
     });
   }
 
-  async function abrirSofExistente(id) {
+  async function abrirSofExistente(id, sofReserva) {
     if (abrindoLinha) return;
     abrindoLinha = true;
     marcarCartaoCarregando(id, true);
     try {
       // O card já tem tudo que obterSof devolveria (fontes, total), então
       // reaproveita "itens" em vez de pedir de novo ao backend - mesmo padrão
-      // já usado em abrirReciboExistente (js/recibos.js).
-      const sof = itens.find(s => s.id === id);
+      // já usado em abrirReciboExistente (js/recibos.js). sofReserva: a SOF
+      // recém-criada pode não estar na página/filtro atual da lista - sem ela,
+      // o modal "Nova SOF" ficava aberto e o próximo Salvar criava outra.
+      const sof = itens.find(s => s.id === id) || sofReserva;
       if (!sof) return;
       // Abre o formulário na hora, com dado local (zero espera de rede), e
       // checa conflito de edição simultânea em paralelo - ver
@@ -610,7 +612,9 @@ const TelaSof = (function () {
     { id: 'sofContrato', campo: 'contrato_snapshot' },
     { id: 'sofTa', campo: 'ta' },
     { id: 'sofSei', campo: 'sei' },
-    { id: 'sofNumero', campo: 'sof_numero' },
+    // sof_numero NÃO entra (2026-10-15): é o número que o SEI deu ao documento
+    // da SOF de origem - a SOF nova nascia com o número de outra (ex.: 051/2026
+    // da SOF-000017 nas SOF-000025/026/027). Fica "000/0000" até o SEI gerar o dela.
     { id: 'sofDea', campo: 'dea' },
     { id: 'sofPeriodoInicio', campo: 'periodo_inicio' },
     { id: 'sofPeriodoFim', campo: 'periodo_fim' },
@@ -1002,14 +1006,17 @@ const TelaSof = (function () {
     });
 
     document.getElementById('btnCancelarSof').addEventListener('click', UI.fecharModal);
-    document.getElementById('btnSalvarSof').addEventListener('click', () => salvarSof(sof));
+    // Estado deste formulário (2026-10-15, SOFs duplicadas): `sof` passa a
+    // apontar pra SOF criada assim que o criarSof volta, então um novo clique
+    // neste mesmo modal vira atualizarSof em vez de outro criarSof. A chave de
+    // idempotência acompanha o modal inteiro - ver reservarIdempotenciaCriarSof_
+    // (backend/Sof.gs).
+    const estadoForm = { sof: sof || null, chaveIdempotencia: editando ? '' : gerarChaveIdempotencia_() };
+    document.getElementById('btnSalvarSof').addEventListener('click', () => salvarSof(estadoForm.sof, { estadoForm }));
     // "Salvar e enviar ao SEI" (sessão 2026-08-08): exige a extensão GAOCG SEI
     // Bridge instalada e o processo já aberto numa aba do sei.pe.gov.br - ver
     // js/sei-bridge.js e Extension/gaocg-sei-bridge/.
-    document.getElementById('btnEnviarSofSei').addEventListener('click', async function () {
-      this.disabled = true;
-      try { await salvarSof(sof, { enviarSei: true }); } finally { this.disabled = false; }
-    });
+    document.getElementById('btnEnviarSofSei').addEventListener('click', () => salvarSof(estadoForm.sof, { estadoForm, enviarSei: true }));
 
     // "🔄 SEI" ao lado de Nº SOF (sessão 2026-08-14, pedido do usuário): traz o
     // número que o SEI gerou no modelo do documento, se "Salvar e enviar ao
@@ -1043,71 +1050,6 @@ const TelaSof = (function () {
           this.disabled = false;
         }
       });
-    }
-
-    /**
-     * Automatiza o que o botão "🔄 SEI" acima faz na mão (sessão 2026-09-04,
-     * pedido do usuário: "depois que salva a SOF com o novo número já
-     * atualizar o novo número da SOF no app"). Chamada logo depois de
-     * SeiBridge.enviarSof, roda em segundo plano - consulta a extensão de
-     * tempos em tempos até achar o número que o SEI gerou (ou desistir) e,
-     * assim que achar, GRAVA sozinha na SOF (Api.chamar('atualizarSof', ...)),
-     * mesmo que o formulário já tenha sido fechado nesse meio tempo (é o caso
-     * de reenviar uma SOF já existente - salvarSof fecha o modal na hora).
-     * Também atualiza o campo #sofNumero ao vivo, se esta MESMA SOF ainda
-     * estiver aberta pra edição (sofEmEdicaoId).
-     *
-     * Intervalo de 10s, desiste depois de ~16min - a extensão descarta o
-     * conteúdo "pendente" depois de 15min (VALIDADE_PENDENTE_MS_,
-     * Extension/gaocg-sei-bridge/content-sei.js), então não faz sentido
-     * insistir além disso. O botão manual continua ali como reforço/atalho,
-     * caso o usuário volte depois dessa janela.
-     */
-    function iniciarBuscaAutomaticaNumeroSof_(sofId, numeroProcesso) {
-      if (!sofId || !numeroProcesso || buscasAutomaticasNumeroSof_.has(sofId)) return;
-      buscasAutomaticasNumeroSof_.add(sofId);
-
-      const INTERVALO_MS = 10000;
-      const LIMITE_MS = 16 * 60 * 1000;
-      const inicio = Date.now();
-
-      (async function tentar() {
-        try {
-          while (Date.now() - inicio < LIMITE_MS) {
-            await new Promise(resolve => setTimeout(resolve, INTERVALO_MS));
-            let resposta;
-            try {
-              resposta = await SeiBridge.consultarNumeroSof(numeroProcesso);
-            } catch (e) {
-              return; // erro inesperado - desiste em silêncio, o botão manual continua disponível
-            }
-            if (resposta.motivo === 'extensao_ausente') return; // sem extensão, não adianta insistir
-
-            if (resposta.ok) {
-              try {
-                await Api.chamar('atualizarSof', { id: sofId, data: { sof_numero: resposta.numero } });
-                CacheAbas.invalidar('sof');
-                if (sofEmEdicaoId === sofId) {
-                  const campoNumero = document.getElementById('sofNumero');
-                  if (campoNumero) {
-                    campoNumero.value = resposta.numero;
-                    campoNumero.dispatchEvent(new Event('input', { bubbles: true }));
-                    campoNumero.dispatchEvent(new Event('change', { bubbles: true }));
-                  }
-                }
-                UI.toast('Número da SOF preenchido automaticamente: ' + resposta.numero + '.', 'sucesso');
-              } catch (e) {
-                // Não conseguiu gravar (ex.: sessão expirou nesse meio tempo) -
-                // não trava nada, o usuário ainda pode trazer na mão depois.
-              }
-              return;
-            }
-            // Ainda não encontrado - tenta de novo no próximo ciclo.
-          }
-        } finally {
-          buscasAutomaticasNumeroSof_.delete(sofId);
-        }
-      })();
     }
 
     // Barra do editor "Objeto da despesa" (negrito). mousedown preventDefault
@@ -1536,9 +1478,118 @@ const TelaSof = (function () {
     };
   }
 
-  /** Salva o SOF - opcoes.enviarSei também monta o documento HTML e manda pra extensão do SEI na sequência (ver SeiBridge.enviarSof abaixo). */
+  /**
+   * Fica no escopo do módulo (2026-10-15): estava declarada DENTRO de
+   * abrirFormulario e era chamada por salvarSof - ReferenceError em todo
+   * "Salvar e enviar ao SEI" desde 2026-09-04, logo depois de criar a SOF e
+   * mandar ao SEI; o modal ficava como "Nova SOF" e cada novo clique criava
+   * outra SOF e outro documento no SEI (SOF-000025/026/027).
+   *
+   * Automatiza o que o botão "🔄 SEI" acima faz na mão (sessão 2026-09-04,
+   * pedido do usuário: "depois que salva a SOF com o novo número já
+   * atualizar o novo número da SOF no app"). Chamada logo depois de
+   * SeiBridge.enviarSof, roda em segundo plano - consulta a extensão de
+   * tempos em tempos até achar o número que o SEI gerou (ou desistir) e,
+   * assim que achar, GRAVA sozinha na SOF (Api.chamar('atualizarSof', ...)),
+   * mesmo que o formulário já tenha sido fechado nesse meio tempo (é o caso
+   * de reenviar uma SOF já existente - salvarSof fecha o modal na hora).
+   * Também atualiza o campo #sofNumero ao vivo, se esta MESMA SOF ainda
+   * estiver aberta pra edição (sofEmEdicaoId).
+   *
+   * Intervalo de 10s, desiste depois de ~16min - a extensão descarta o
+   * conteúdo "pendente" depois de 15min (VALIDADE_PENDENTE_MS_,
+   * Extension/gaocg-sei-bridge/content-sei.js), então não faz sentido
+   * insistir além disso. O botão manual continua ali como reforço/atalho,
+   * caso o usuário volte depois dessa janela.
+   */
+  function iniciarBuscaAutomaticaNumeroSof_(sofId, numeroProcesso) {
+    if (!sofId || !numeroProcesso || buscasAutomaticasNumeroSof_.has(sofId)) return;
+    buscasAutomaticasNumeroSof_.add(sofId);
+
+    const INTERVALO_MS = 10000;
+    const LIMITE_MS = 16 * 60 * 1000;
+    const inicio = Date.now();
+
+    (async function tentar() {
+      try {
+        while (Date.now() - inicio < LIMITE_MS) {
+          await new Promise(resolve => setTimeout(resolve, INTERVALO_MS));
+          let resposta;
+          try {
+            resposta = await SeiBridge.consultarNumeroSof(numeroProcesso);
+          } catch (e) {
+            return; // erro inesperado - desiste em silêncio, o botão manual continua disponível
+          }
+          if (resposta.motivo === 'extensao_ausente') return; // sem extensão, não adianta insistir
+
+          // A extensão guarda o número pelo PROCESSO, não pela SOF: sem este
+          // corte, um número capturado de uma SOF anterior do mesmo processo
+          // era gravado nesta logo na 1ª consulta (2026-10-15).
+          if (resposta.ok && Number(resposta.capturadoEm) >= inicio) {
+            try {
+              await Api.chamar('atualizarSof', { id: sofId, data: { sof_numero: resposta.numero } });
+              CacheAbas.invalidar('sof');
+              if (sofEmEdicaoId === sofId) {
+                const campoNumero = document.getElementById('sofNumero');
+                if (campoNumero) {
+                  campoNumero.value = resposta.numero;
+                  campoNumero.dispatchEvent(new Event('input', { bubbles: true }));
+                  campoNumero.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+              }
+              UI.toast('Número da SOF preenchido automaticamente: ' + resposta.numero + '.', 'sucesso');
+            } catch (e) {
+              // Não conseguiu gravar (ex.: sessão expirou nesse meio tempo) -
+              // não trava nada, o usuário ainda pode trazer na mão depois.
+            }
+            return;
+          }
+          // Ainda não encontrado - tenta de novo no próximo ciclo.
+        }
+      } finally {
+        buscasAutomaticasNumeroSof_.delete(sofId);
+      }
+    })();
+  }
+
+  function gerarChaveIdempotencia_() {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID().replace(/-/g, '');
+    return Date.now().toString(36) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+  }
+
+  /**
+   * Trava de salvamento (2026-10-15, SOF-000025/026/027 criadas pela mesma
+   * pessoa em 2 min): o fluxo inteiro - criar, esperar a extensão do SEI (até
+   * 30s), recarregar a lista, reabrir em edição - roda sem spinner global, e só
+   * o "Salvar e enviar" se desabilitava. Um clique em "Salvar" nesse meio tempo
+   * criava outra SOF. Agora os dois botões ficam travados do início ao fim e
+   * qualquer clique extra é ignorado.
+   */
+  let salvandoSof_ = false;
+
+  function travarBotoesSalvarSof_(travar) {
+    ['btnSalvarSof', 'btnEnviarSofSei'].forEach(id => {
+      const botao = document.getElementById(id);
+      if (botao) botao.disabled = travar;
+    });
+  }
+
   async function salvarSof(sofExistente, opcoes) {
+    if (salvandoSof_) return;
+    salvandoSof_ = true;
+    travarBotoesSalvarSof_(true);
+    try {
+      await salvarSofInterno_(sofExistente, opcoes);
+    } finally {
+      salvandoSof_ = false;
+      travarBotoesSalvarSof_(false);
+    }
+  }
+
+  /** Salva o SOF - opcoes.enviarSei também monta o documento HTML e manda pra extensão do SEI na sequência (ver SeiBridge.enviarSof abaixo). */
+  async function salvarSofInterno_(sofExistente, opcoes) {
     opcoes = opcoes || {};
+    const estadoForm = opcoes.estadoForm || null;
     // Nada mudou (sessão 2026-08-13, pedido do usuário): editando uma SOF já
     // existente, no botão "Salvar" puro (enviarSei pede uma ação explícita à
     // parte, então continua rodando mesmo sem edição), só fecha o card em vez
@@ -1575,7 +1626,14 @@ const TelaSof = (function () {
     try {
       let resposta;
       if (sofExistente) resposta = await Api.chamar('atualizarSof', { id: sofExistente.id, data: dados });
-      else resposta = await Api.chamar('criarSof', { data: dados });
+      else {
+        const chaveIdempotencia = estadoForm ? estadoForm.chaveIdempotencia : '';
+        resposta = await Api.chamar('criarSof', { data: Object.assign({}, dados, chaveIdempotencia ? { chave_idempotencia: chaveIdempotencia } : {}) });
+        // A partir daqui este modal já É a SOF criada: se algo adiante falhar
+        // (extensão, recarga da lista), o próximo clique atualiza em vez de criar.
+        if (estadoForm) estadoForm.sof = resposta;
+        sofEmEdicaoId = resposta.id;
+      }
 
       // Objeto novo (digitado via "+ Adicionar novo objeto..." no <select>, abaixo) só
       // vira opção de verdade em Listas Personalizadas depois que o SOF salvou com sucesso.
@@ -1653,7 +1711,7 @@ const TelaSof = (function () {
         // id e a seção de Notas de Empenho (produto final do processo) pode
         // ser usada, sem exigir que o usuário feche e reabra manualmente.
         await carregar();
-        await abrirSofExistente(resposta.id);
+        await abrirSofExistente(resposta.id, resposta);
       }
     } catch (err) {
       erroEl.classList.remove('erro-campo-grande');
