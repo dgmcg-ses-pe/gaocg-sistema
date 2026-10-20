@@ -21,22 +21,6 @@ A especificação original (documento de requisitos e modelo de dados que orient
 ## Estrutura do repositório
 
 ```
-/backend            Google Apps Script (API)
-  Code.gs           doGet/doPost, roteamento de todas as ações
-  Utils.gs          Helpers de planilha, validação (CNPJ/SEI/SOF), resposta HTTP, OCR
-  Auth.gs           Login, hash de senha, geração/validação de token, alterar nome/senha
-  Usuarios.gs       Gestão de Usuários (exclusiva do gerente)
-  Unidades.gs       Cadastro Mestre de Unidades + Termos Aditivos/Valor do C.G.
-  ListasPersonalizadas.gs   Listas globais: Andamento (SOF), Status (Recibo), OSS, Objeto
-  Sof.gs            Gestão de SOF (múltiplas fontes, stepper de andamento)
-  NotasEmpenho.gs   Notas de Empenho (original/reforço, alerta de saldo)
-  Recibos.gs        Recibos (parcela dividida, OCR de anexos, migração histórica)
-  LogAuditoria.gs   Log de auditoria
-  EdicoesEmAndamento.gs   Aviso de edição simultânea
-  Dashboard.gs      Indicadores
-  MetasProcessos.gs Metas Mensais de Processos (padrão mensal por Unidade+Objeto, painel "Processos do mês" no Dashboard)
-  appsscript.json   Manifesto do projeto Apps Script
-
 /css/style.css       Estilos (CSS puro, sem framework), layout responsivo
 /js                  Um módulo por tela + api.js/auth.js/app.js/edicao-simultanea.js
 index.html           Shell da SPA
@@ -48,19 +32,39 @@ PROGRESS.md          Histórico real de decisões e mudanças - fonte da verdade
 RELATORIO_LENTIDAO_SOF.md   Diagnóstico de performance (referenciado a partir do PROGRESS.md)
 ```
 
-**Arquivos de backend que existem no projeto do Apps Script mas não estão neste repositório:** `Contadores.gs` (geração de IDs sequenciais) e a rotina original de bootstrap da planilha (`configurarPlanilha`, historicamente em `Seed.gs`) nunca foram coletados aqui - ver [`PROGRESS.md`](PROGRESS.md), seção "Referências úteis", para o estado exato de cada um. Ao editar qualquer `.gs` que não esteja em `/backend`, peça o conteúdo atual de quem tem acesso ao editor do Apps Script antes de propor mudanças - o editor do Apps Script é sempre a fonte da verdade de que roda de verdade.
+### Onde fica o backend
+
+**O código do backend não está neste repositório.** Os arquivos `.gs` do Apps Script (roteamento, regras de negócio, autenticação, OCR) ficam num repositório **privado** separado, por decisão de segurança: este repositório é público e é servido pelo GitHub Pages, que entregaria os `.gs` como arquivo bruto para qualquer um — expondo lógica de negócio e regras de autorização.
+
+Quem precisa mexer no backend precisa de acesso a esse repositório privado **e** ao projeto do Apps Script vinculado à planilha. A fonte da verdade sobre o que roda de verdade é sempre o editor do Apps Script.
+
+Para quem só quer **consumir os dados**, não é preciso nada disso: existe uma API de leitura pública documentada em [`docs/API_CONSULTA_EXTERNA.md`](docs/API_CONSULTA_EXTERNA.md) (ver seção abaixo).
 
 **Desvio documentado em relação à estrutura sugerida na especificação original:** os arquivos de frontend ficam na raiz do repositório (`index.html`, `css/`, `js/`) em vez de dentro de `/frontend`, para manter continuidade com o layout já publicado no GitHub Pages deste repositório. Também foram adicionados módulos de frontend não previstos na especificação original (`js/usuarios.js`, `js/listas.js`, `js/edicao-simultanea.js`, `js/dashboard.js`, `js/log-auditoria.js`, `js/unidades.js`, `js/metas-processos.js`), um por tela/funcionalidade.
 
+## API de consulta externa
+
+O backend expõe endpoints de **leitura** autenticados por **chave de API** (separada do login de usuário), pensados para consumo por ferramentas externas — Power BI, Excel, outro sistema. São quatro: `api_recibos`, `api_sof`, `api_unidades` e `api_notasEmpenho`, com os mesmos filtros e a mesma paginação das telas correspondentes do app.
+
+```bash
+curl -L "<URL_DO_WEB_APP>/exec?action=api_recibos&chave=SUA_CHAVE&competencia=2026-09&pageSize=100000"
+```
+
+Só leitura — não existe endpoint de escrita por chave de API, de propósito. As chaves são geradas, listadas e revogadas pelo perfil **Administrador do Aplicativo**.
+
+📄 **Documentação completa em [`docs/API_CONSULTA_EXTERNA.md`](docs/API_CONSULTA_EXTERNA.md)**: como gerar/revogar chave, campos devolvidos por cada endpoint, formato de resposta e erros, e como ligar no Power BI/Excel.
+
 ## Passo a passo de implantação
+
+> As etapas 1, 2 e 2.1 abaixo são de implantação do **backend** e pressupõem acesso ao repositório privado onde os `.gs` vivem (ver "Onde fica o backend"). Para só rodar/servir o frontend, vá direto para a etapa 3.
 
 ### 1. Criar e configurar a planilha (Fase 0)
 
 1. Crie uma planilha Google Sheets nova e vazia (ex.: "GAOCG - Banco de Dados").
 2. Menu **Extensões > Apps Script**. Isso cria um projeto de script vinculado (bound script) à planilha.
-3. Apague o conteúdo padrão de `Code.gs` do editor do Apps Script e cole, em arquivos `.gs` separados, o conteúdo de cada arquivo em `/backend` deste repositório (um arquivo de script por `.gs`: `Code`, `Utils`, `Auth`, `Usuarios`, `Unidades`, `ListasPersonalizadas`, `Sof`, `NotasEmpenho`, `Recibos`, `LogAuditoria`, `EdicoesEmAndamento`, `Dashboard`, `MetasProcessos`).
-4. Copie também o conteúdo de `backend/appsscript.json` para o manifesto do projeto (no editor: ícone de engrenagem > "Mostrar arquivo de manifesto `appsscript.json`"); habilite o serviço avançado **Drive API** (Serviços (+) → Drive API), usado pela leitura por OCR dos anexos de Recibo.
-5. **`Contadores.gs`** (geração de IDs sequenciais) e a rotina de bootstrap da planilha (histórica `Seed.gs`/`configurarPlanilha`) não estão neste repositório (ver nota acima) — reconstrua-os a partir do projeto Apps Script já em produção, ou peça a quem tem acesso a ele. `Contadores.gs` precisa de uma entrada no mapa `PREFIXOS_ID` por aba com id sequencial (`SOF`, `Recibos`, `Unidades`, `NotasEmpenho`, `SofFontes`, `UnidadesTA`, `Usuarios`, `ListasPersonalizadas`, `LogAuditoria`, entre outras — ver `proximoId_` em `Utils.gs`).
+3. Apague o conteúdo padrão de `Code.gs` do editor do Apps Script e cole, em arquivos `.gs` separados, o conteúdo de cada arquivo do **repositório privado do backend** (um arquivo de script por `.gs`: `Code`, `Utils`, `Auth`, `Usuarios`, `Unidades`, `ListasPersonalizadas`, `Sof`, `NotasEmpenho`, `Recibos`, `LogAuditoria`, `EdicoesEmAndamento`, `Dashboard`, `MetasProcessos`, `Contadores`, `Seed`, `Relatorios`, `Sugestoes`, `MetasProcessos`, `Versoes`, `Api`). Mais rápido: pule a colagem manual e use o `clasp` (seção 2.1), que envia todos de uma vez.
+4. Copie também o conteúdo de `appsscript.json` (mesmo repositório) para o manifesto do projeto (no editor: ícone de engrenagem > "Mostrar arquivo de manifesto `appsscript.json`"); habilite o serviço avançado **Drive API** (Serviços (+) → Drive API), usado pela leitura por OCR dos anexos de Recibo.
+5. `Contadores.gs` precisa de uma entrada no mapa `PREFIXOS_ID` por aba com id sequencial (`SOF`, `Recibos`, `Unidades`, `NotasEmpenho`, `SofFontes`, `UnidadesTA`, `Usuarios`, `ListasPersonalizadas`, `LogAuditoria`, `Sugestoes`, `ApiKeys`, entre outras — ver `proximoId_` em `Utils.gs`). **Esquecer um prefixo aqui já quebrou três funcionalidades** — a criação falha com "Prefixo de ID não definido para a aba X". Ao criar uma aba nova, adicione o prefixo antes de escrever o código que a usa.
 6. Rode a rotina de bootstrap (cria as abas do `modelo_dados_gaocg.md` com os cabeçalhos corretos, a aba de controle `Contadores` e um usuário gerente inicial) e depois **troque a senha desse usuário inicial no primeiro acesso** (crie um usuário definitivo e inative o inicial, ou redefina a senha dele pela tela de Usuários). Depois de colar `ListasPersonalizadas.gs`, rode também `semearListaOSS()` e `semearListaObjetos()` uma vez, pra popular as listas de OSS/Objeto a partir do que já estiver cadastrado em Unidades/SOF/Recibos (sem isso, o campo Objeto — obrigatório — aparece vazio nos formulários).
 
 ### 2. Publicar o backend como Web App
@@ -78,15 +82,17 @@ Depois da configuração inicial acima (que só acontece uma vez), toda alteraç
 
 1. `npm install -g @google/clasp` (precisa de Node.js).
 2. `clasp login` — abre o navegador para autorizar com a conta Google que tem acesso ao projeto do Apps Script.
-3. Copie `backend/.clasp.json.example` para `backend/.clasp.json` (fica de fora do git — é config de máquina/pessoa, não do projeto) e cole o **Script ID** do projeto (`script.google.com`, projeto aberto → ⚙️ Configurações do projeto → seção IDs).
-4. `clasp deployments` (de dentro de `backend/`) lista as implantações existentes — identifique a que corresponde à URL publicada (o trecho depois de `/macros/s/` e antes de `/exec` na URL é o ID da implantação, começa com `AKfycb...`).
-5. Pra publicar uma alteração: de dentro de `backend/`,
+3. No clone do **repositório privado do backend**, copie `.clasp.json.example` para `.clasp.json` (fica de fora do git — é config de máquina/pessoa, não do projeto) e cole o **Script ID** do projeto (`script.google.com`, projeto aberto → ⚙️ Configurações do projeto → seção IDs).
+4. `clasp deployments` lista as implantações existentes — identifique a que corresponde à URL publicada (o trecho depois de `/macros/s/` e antes de `/exec` na URL é o ID da implantação, começa com `AKfycb...`). Normalmente há duas: uma `@HEAD` e a de produção, fixada numa versão numerada.
+5. Pra publicar uma alteração (todos os comandos de dentro do repositório do backend):
    ```
-   clasp push --force
+   clasp pull                     # confira primeiro se o editor divergiu do repo
+   clasp push
    clasp version "descrição da mudança"
-   clasp redeploy <ID_DA_IMPLANTACAO> -V <número da versão criada no passo anterior> -d "descrição da mudança"
+   clasp deploy --deploymentId <ID_DA_IMPLANTACAO> --versionNumber <número da versão criada acima>
    ```
-   O `push` sozinho só atualiza o conteúdo "HEAD" (visível no editor) - sem `version` + `redeploy`, a URL publicada continua servindo a versão antiga.
+   O `push` sozinho só atualiza o conteúdo "HEAD" (visível no editor) — sem `version` + `deploy`, a URL publicada continua servindo a versão antiga.
+6. Confira que entrou no ar: `curl -L "<URL_DO_WEB_APP>/exec?action=ping"` deve responder `{"ok":true,"data":{"pong":true}}`. O `-L` é obrigatório — a URL `/exec` responde com redirect.
 
 ### 3. Configurar o frontend
 
@@ -110,7 +116,7 @@ Essa rotina grava `origem = 'importacao_inicial'` e **não** gera entradas em `L
 
 ## Segurança (spike da Fase 0)
 
-- **CORS:** o Apps Script Web App não responde de forma confiável a um preflight OPTIONS (a URL `/exec` redireciona e o navegador rejeita). A solução adotada foi **evitar completamente o preflight**: o frontend só faz `GET` (nunca gera preflight) ou `POST` com `Content-Type: text/plain` (um content-type "simples" para CORS). Ver comentários em `backend/Utils.gs` (`jsonOut_`) e `js/api.js`.
+- **CORS:** o Apps Script Web App não responde de forma confiável a um preflight OPTIONS (a URL `/exec` redireciona e o navegador rejeita). A solução adotada foi **evitar completamente o preflight**: o frontend só faz `GET` (nunca gera preflight) ou `POST` com `Content-Type: text/plain` (um content-type "simples" para CORS). Ver comentários em `Utils.gs` (`jsonOut_`, no repositório do backend) e `js/api.js`.
 - **Autenticação:** todo endpoint exige um token válido, exceto `ping` e `login`. O token é assinado com HMAC-SHA256 (segredo gerado automaticamente em Script Properties na primeira execução, nunca no código-fonte) e não expira por tempo (requisito de negócio) — mas cada requisição revalida o usuário contra a aba `Usuarios` (perfil/`ativo` atuais, cache de 30s), então inativar um usuário efetiva o bloqueio em até 30s.
 - **Senhas:** hash SHA-256 com salt por usuário (`Auth.gs`). Apps Script não tem bibliotecas de hashing robustas como bcrypt/argon2 nativamente; isso é um trade-off conhecido do ambiente de baixo custo, documentado aqui conforme pedido.
 - **Spreadsheet ID:** nunca exposto ao frontend; fica em Script Properties (`SPREADSHEET_ID`, opcional — se vazio, o script usa a planilha ativa/vinculada).
