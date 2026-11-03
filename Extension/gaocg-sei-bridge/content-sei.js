@@ -912,8 +912,11 @@ function corpoDoEditor_() {
   // `.ck-editor__editable` é o CKEditor 5, que o SEI passou a usar na
   // atualização de 2026-11 (o selo "Powered by CKEditor" em cada seção). Sem
   // este seletor a extensão nunca achava o editor novo e não colava nada.
-  // Seções travadas do CKEditor 5 ficam com contenteditable="false".
-  for (const el of acharTodos_('.cke_editable[contenteditable="true"], .ck-editor__editable[contenteditable="true"]')) {
+  // Seções travadas do CKEditor 5 ficam com contenteditable="false". Cada
+  // célula de tabela também é um `.ck-editor__editable` (com
+  // `.ck-editor__nested-editable`) - fica de fora, senão uma célula poderia
+  // virar o "corpo" do documento.
+  for (const el of acharTodos_('.cke_editable[contenteditable="true"], .ck-editor__editable[contenteditable="true"]:not(.ck-editor__nested-editable)')) {
     candidatos.push({ corpo: el, editavel: true, altura: el.offsetHeight || 0 });
   }
 

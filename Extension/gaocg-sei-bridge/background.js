@@ -213,7 +213,10 @@ function aplicarViaCkeditor_(html) {
       if (!prontas.length) return { ok: false, motivo: "CKEditor 5 ainda não está pronto" };
       const editaveis = prontas.filter(i => !i.readOnly);
       const candidatas = editaveis.length ? editaveis : prontas;
+      // No SEI (diagnóstico real, 2026-11-03) são três editores inline -
+      // cabeçalho e rodapé travados e o corpo com a classe `infra-edit`.
       const escolhida =
+        candidatas.find(i => i.el.classList.contains("infra-edit")) ||
         candidatas.find(i => /principal|conteudo|conteúdo|corpo|texto/i.test(i.raiz || "")) ||
         candidatas.slice().sort((a, b) => b.altura - a.altura)[0];
 
