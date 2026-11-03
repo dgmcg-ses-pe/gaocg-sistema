@@ -908,8 +908,12 @@ function corpoDoEditor_() {
     } catch (e) { /* cross-origin */ }
   }
 
-  // CKEditor 5 / modo "div editável" (sem iframe).
-  for (const el of acharTodos_('.cke_editable[contenteditable="true"], div[contenteditable="true"].cke_editable')) {
+  // Modo "div editável" (sem iframe): `.cke_editable` é o CKEditor 4 inline;
+  // `.ck-editor__editable` é o CKEditor 5, que o SEI passou a usar na
+  // atualização de 2026-11 (o selo "Powered by CKEditor" em cada seção). Sem
+  // este seletor a extensão nunca achava o editor novo e não colava nada.
+  // Seções travadas do CKEditor 5 ficam com contenteditable="false".
+  for (const el of acharTodos_('.cke_editable[contenteditable="true"], .ck-editor__editable[contenteditable="true"]')) {
     candidatos.push({ corpo: el, editavel: true, altura: el.offsetHeight || 0 });
   }
 
@@ -1045,10 +1049,14 @@ async function aguardarEditorEstabilizar_(msEstavel, msLimite) {
 function conteudoConfere_(html) {
   const corpo = corpoDoEditor_();
   if (!corpo) return false;
-  const atual = (corpo.innerHTML || "").length;
-  // Metade do tamanho é folga suficiente: o CKEditor reescreve a marcação
-  // (remove atributos, normaliza tags), mas não corta o documento pela metade.
-  return atual >= Math.floor(html.length * 0.5);
+  // Compara o TEXTO, não a marcação: o CKEditor 5 descarta estilos inline que
+  // o esquema dele não conhece, então o HTML gravado pode ficar bem menor que
+  // o enviado mesmo com o documento inteiro colado. Metade do texto é folga
+  // suficiente - o editor normaliza espaços, mas não corta o documento.
+  const somenteTexto = s => (s || "").replace(/\s+/g, "");
+  const esperado = somenteTexto(new DOMParser().parseFromString(html, "text/html").body.textContent);
+  const atual = somenteTexto(corpo.textContent);
+  return atual.length >= Math.floor(esperado.length * 0.5);
 }
 
 /**
@@ -1146,8 +1154,11 @@ async function aplicarConteudo_(corpoInicial, pendente) {
   for (let tentativa = 1; tentativa <= 3 && !colou; tentativa++) {
     resultado = await pedirInjecaoNoMainWorld_(html);
     via = resultado.ok ? "api" : "dom";
-    if (!resultado.ok) {
-      const alvo = corpoDoEditor_() || corpo;
+    const alvo = corpoDoEditor_() || corpo;
+    // No CKEditor 5 o DOM é só um reflexo do modelo interno: escrever
+    // innerHTML não muda o documento e ainda pode desalinhar o editor. Lá só a
+    // API (MAIN world) serve - se ela falhar, a próxima tentativa repete.
+    if (!resultado.ok && !alvo.classList.contains("ck-editor__editable")) {
       alvo.innerHTML = html;
       alvo.dispatchEvent(new Event("input", { bubbles: true }));
       alvo.dispatchEvent(new Event("change", { bubbles: true }));
@@ -1196,7 +1207,16 @@ function salvarNoEditor_() {
     ".cke_button__save"
   ].join(", ");
 
-  const botao = acharTodos_(seletores).find(b => b.offsetParent !== null);
+  // CKEditor 5: os botões da barra são <button class="ck-button"> com o nome
+  // num <span class="ck-button__label"> (ou só no tooltip, quando o rótulo
+  // fica escondido).
+  const botaoCk5 = acharTodos_("button.ck-button").find(b => {
+    const rotulo = b.querySelector(".ck-button__label");
+    const nome = (b.getAttribute("data-cke-tooltip-text") || (rotulo && rotulo.textContent) || "").trim();
+    return /^Salvar\b/i.test(nome) && b.offsetParent !== null;
+  });
+
+  const botao = botaoCk5 || acharTodos_(seletores).find(b => b.offsetParent !== null);
   if (!botao) return false;
   clicarComoUsuario_(botao.closest("a") || botao);
   return true;

@@ -176,6 +176,57 @@ async function enviarParaAba(abaId, payload) {
  */
 function aplicarViaCkeditor_(html) {
   try {
+    // ===== CKEditor 5 (SEI atualizado em 2026-11) =====
+    // Não existe `CKEDITOR.instances`: cada área editável (div
+    // `.ck-editor__editable`) carrega o editor dono dela em `ckeditorInstance`.
+    // Uma seção pode ser um editor separado ou uma "raiz" de um editor
+    // multi-raiz com barra única - por isso o conteúdo vai para a RAIZ dessa
+    // área (`data.set({ raiz: html })`), nunca para o editor inteiro, que
+    // apagaria cabeçalho e rodapé.
+    // Esta função é serializada para o MAIN world e não enxerga as funções
+    // do resto do arquivo: tudo o que ela usa precisa estar aqui dentro.
+    const areasCk5 = Array.from(document.querySelectorAll(".ck-editor__editable"))
+      .filter(el => el.ckeditorInstance);
+    if (areasCk5.length) {
+      const info = areasCk5.map(el => {
+        const editor = el.ckeditorInstance;
+        let raiz = null;
+        try {
+          const nomes = editor.ui && editor.ui.getEditableElementsNames
+            ? Array.from(editor.ui.getEditableElementsNames())
+            : [];
+          raiz = nomes.find(n => editor.ui.getEditableElement(n) === el) || null;
+        } catch (e) { /* versão sem a API de nomes */ }
+        return {
+          el: el,
+          editor: editor,
+          raiz: raiz,
+          readOnly: !!editor.isReadOnly || el.getAttribute("contenteditable") !== "true",
+          altura: el.offsetHeight || 0,
+          status: editor.state
+        };
+      });
+      console.log("[GAOCG SEI Bridge] áreas CKEditor 5 nesta página:",
+        info.map(i => ({ raiz: i.raiz, readOnly: i.readOnly, altura: i.altura, status: i.status })));
+
+      const prontas = info.filter(i => i.status === "ready" || i.status === undefined);
+      if (!prontas.length) return { ok: false, motivo: "CKEditor 5 ainda não está pronto" };
+      const editaveis = prontas.filter(i => !i.readOnly);
+      const candidatas = editaveis.length ? editaveis : prontas;
+      const escolhida =
+        candidatas.find(i => /principal|conteudo|conteúdo|corpo|texto/i.test(i.raiz || "")) ||
+        candidatas.slice().sort((a, b) => b.altura - a.altura)[0];
+
+      if (escolhida.raiz) {
+        escolhida.editor.data.set({ [escolhida.raiz]: html });
+      } else {
+        escolhida.editor.setData(html);
+      }
+      console.log("[GAOCG SEI Bridge] conteúdo aplicado (CKEditor 5) na raiz:", escolhida.raiz || "main");
+      return { ok: true, escolhida: escolhida.raiz || "main" };
+    }
+
+    // ===== CKEditor 4 (SEI até 2026-10) =====
     const CK = window.CKEDITOR;
     if (!CK || !CK.instances) return { ok: false, motivo: "CKEDITOR não encontrado nesta página" };
 
