@@ -956,8 +956,15 @@ async function vigiarEditorParaConteudoPendente_() {
   // que passa fácil de um minuto. O intervalo de 600ms mantém o custo baixo.
   const restante = VALIDADE_PENDENTE_MS_ - (Date.now() - (pendente.criadoEm || 0));
   if (restante <= 0) return;
+  // Logs de diagnóstico: sem eles, "não achei o editor" e "não havia nada a
+  // colar" ficavam indistinguíveis no console (atualização do SEI, 2026-11).
+  console.log("[GAOCG SEI Bridge] " + (pendente.rotulo || "SOF") + " pendente - procurando o editor nesta página.");
   const corpo = await aguardarCondicao_(() => corpoDoEditor_(), restante, 600);
-  if (!corpo) return;
+  if (!corpo) {
+    console.log("[GAOCG SEI Bridge] editor não encontrado nesta página até o pendente expirar.");
+    return;
+  }
+  console.log("[GAOCG SEI Bridge] editor encontrado:", corpo.className || corpo.tagName);
 
   // Substitui SEMPRE, sem perguntar (decisão do usuário, 2026-08-10).
   //
