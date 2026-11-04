@@ -15,7 +15,7 @@ const TelaLogAuditoria = (function () {
         ${gerente ? `
         <div class="barra-filtros">
           <div class="campo"><label>Tipo de processo</label>
-            <select id="logTipoProcesso"><option value="">Todos</option><option>SOF</option><option>Recibo</option><option>Unidade</option><option>Usuario</option><option>NotaEmpenho</option></select>
+            <select id="logTipoProcesso"><option value="">Todos</option><option>SOF</option><option>Recibo</option><option>Unidade</option><option>Usuario</option><option>NotaEmpenho</option><option>Login</option></select>
           </div>
           <div class="campo"><label>ID do processo</label><input id="logProcessoId" /></div>
           <label style="align-self:center;font-size:13px"><input type="checkbox" id="logForaDono" /> Somente edições em processo de outro usuário</label>

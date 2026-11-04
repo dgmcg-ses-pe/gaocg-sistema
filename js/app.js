@@ -1257,8 +1257,11 @@ const App = (function () {
     document.getElementById('nomeUsuarioTopo').textContent = usuario.nome;
     document.getElementById('perfilUsuarioTopo').textContent = UI.rotuloPerfil(usuario.perfil);
     document.querySelectorAll('.somente-gerente').forEach(el => el.classList.toggle('oculto', !Auth.ehGerente()));
-    navegarPara('dashboard');
     verificarTrocaSenhaObrigatoria_();
+    // Com a troca pendente o servidor recusa tudo (ver Code.gs): só carrega depois
+    // de trocar, no submit de formTrocaSenhaObrigatoria.
+    if (usuario.precisaTrocarSenha) return;
+    navegarPara('dashboard');
     preCarregarAbas_();
   }
 
@@ -1376,7 +1379,8 @@ const App = (function () {
         // Senha primeiro: se a senha atual estiver errada, o nome não chega
         // a ser alterado - evita salvar só metade do que foi pedido.
         if (querTrocarSenha) {
-          await Api.chamar('alterarMinhaSenha', { senhaAtual, novaSenha: senhaNova });
+          const respostaSenha = await Api.chamar('alterarMinhaSenha', { senhaAtual, novaSenha: senhaNova });
+          Auth.atualizarToken(respostaSenha.token);
         }
         if (novoNome !== usuario.nome) {
           await Api.chamar('alterarMeuNome', { novoNome });
@@ -1421,6 +1425,9 @@ const App = (function () {
     document.getElementById('fundoMenuMobile').addEventListener('click', fecharMenuMobile);
 
     document.getElementById('btnSair').addEventListener('click', () => {
+      // Antes de limpar a sessão local: a chamada leva o token atual, e o logout
+      // não fica esperando a resposta.
+      Api.chamar('encerrarSessao', {}, { silencioso: true }).catch(() => {});
       Auth.encerrarSessaoLocal();
       mostrarTelaLogin();
     });
@@ -1454,11 +1461,14 @@ const App = (function () {
       if (novaSenha.length < 6) { UI.mostrarErro(erroEl, 'A nova senha deve ter pelo menos 6 caracteres.'); return; }
       if (novaSenha !== confirmacao) { UI.mostrarErro(erroEl, 'A confirmação não confere com a nova senha.'); return; }
       try {
-        await Api.chamar('trocarSenhaPrimeiroLogin', { novaSenha });
+        const respostaTroca = await Api.chamar('trocarSenhaPrimeiroLogin', { novaSenha });
+        Auth.atualizarToken(respostaTroca.token);
         Auth.limparPrecisaTrocarSenhaLocal();
         this.reset();
         document.getElementById('sobreposicaoTrocaSenhaObrigatoria').classList.add('oculto');
         UI.toast('Senha alterada com sucesso.', 'sucesso');
+        navegarPara('dashboard');
+        preCarregarAbas_();
       } catch (err) {
         UI.mostrarErro(erroEl, err.message);
       }

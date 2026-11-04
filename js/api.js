@@ -181,7 +181,10 @@ const Api = (function () {
       }
 
       if (!json.ok) {
-        if (json.error && json.error.toLowerCase().indexOf('sessão') !== -1) {
+        // Só derruba a sessão se o token recusado ainda for o atual: trocar a senha
+        // revoga o token antigo, e uma chamada em segundo plano que saiu com ele
+        // não pode deslogar quem já recebeu o novo.
+        if (corpo.token === token && json.error && json.error.toLowerCase().indexOf('sessão') !== -1) {
           Auth.encerrarSessaoLocal();
           App.mostrarTelaLogin();
         }

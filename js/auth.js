@@ -70,6 +70,11 @@ const Auth = (function () {
     } catch (e) { /* sessão inválida, ignora */ }
   }
 
+  /** Troca de senha revoga o token antigo (revogarTokensUsuario_, Auth.gs): esta aba segue com o novo, sem exigir novo login. */
+  function atualizarToken(novoToken) {
+    if (novoToken && usuarioAtual) salvarSessao(novoToken, usuarioAtual);
+  }
+
   /**
    * Administrador do Aplicativo (sessão 2026-08-14) herda tudo que Gerente
    * tem - por isso conta aqui também, em vez de virar uma checagem paralela
@@ -84,5 +89,5 @@ const Auth = (function () {
     return !!usuarioAtual && usuarioAtual.perfil === 'administrador';
   }
 
-  return { carregarSessaoSalva, salvarSessao, encerrarSessaoLocal, login, usuario, ehGerente, ehAdministrador, atualizarNomeLocal, limparPrecisaTrocarSenhaLocal };
+  return { carregarSessaoSalva, salvarSessao, encerrarSessaoLocal, login, usuario, ehGerente, ehAdministrador, atualizarNomeLocal, limparPrecisaTrocarSenhaLocal, atualizarToken };
 })();
