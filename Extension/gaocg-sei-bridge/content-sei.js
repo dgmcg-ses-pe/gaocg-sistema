@@ -68,11 +68,8 @@ const MAPA_TIPO_DOCUMENTO = {
   },
   nota_empenho: { filtro: "Nota de Empenho", rotulos: ["Nota de Empenho"] },
   recibo: { filtro: "Recibo", rotulos: ["Recibo"] }
-  // O envio em lote (arrastar e soltar, ver "Envio em lote" mais abaixo) NÃO
-  // usa uma entrada fixa aqui: o tipo (ex. "Anexo") vem da configuração do
-  // painel e é passado direto como override pra escolherTipoDocumento_. Uma
-  // 1ª versão tentava um tipo genérico "Externo" antes - não existe; corrigido
-  // depois de conferir a extensão SEI Pro (ver comentário na seção do lote).
+  // O anexo por arraste não passa por esta tabela: ele não abre as telas do SEI
+  // (ver "Anexar arquivos arrastando para a árvore", mais abaixo).
 };
 
 const MAPA_NIVEL_ACESSO = { publico: "0", restrito: "1", sigiloso: "2" };
@@ -280,7 +277,7 @@ function textoDaLinhaLista_(el) {
  * Versão ESTRITA de `itemDaLista_`, usada só quando há termos em `excluir` -
  * hoje, só o tipo "SOF" (ver MAPA_TIPO_DOCUMENTO). Sem `excluir` ela delega pro
  * `itemDaLista_` original, de propósito: os fluxos que não têm ambiguidade
- * (Nota de Empenho, Recibo e o envio em lote) continuam com o comportamento
+ * (Nota de Empenho e Recibo) continuam com o comportamento
  * exato de antes, sem risco de regressão.
  *
  * Corrige DOIS furos que ainda deixavam a e-SOF ser escolhida de vez em quando
@@ -1260,70 +1257,52 @@ function avisarNaTela_(texto) {
   setTimeout(() => aviso.remove(), 8000);
 }
 
-/* ===================== Envio em lote (arrastar e soltar) =====================
+/* ================ Anexar arquivos arrastando para a árvore do processo ================
  *
- * Pedido do usuário (2026-09-02): arrastar vários arquivos do PC direto para
- * dentro do processo aberto no SEI, cada um virando um "Documento Externo".
+ * Pedido do usuário (2026-11-04): soltar os arquivos na coluna da árvore e o
+ * envio acontecer por trás, sem tela branca e sem o SEI pedir nada.
  *
- * HISTÓRICO (2 rodadas de correção antes do 1º teste real com captura de
- * tela, 2026-09-03):
+ * Até a v0.51.0 o envio dirigia as telas do próprio SEI (clicava em "Incluir
+ * Documento", preenchia o formulário, clicava em Salvar) sob uma camada que
+ * cobria a página inteira - daí a tela branca e inutilizada. Qualquer campo que
+ * o JavaScript da página zerasse ou recusasse virava um alerta na frente do
+ * usuário, como o que pedia a data do documento.
  *
- * 1ª tentativa: escolhia um tipo genérico "Externo" primeiro. Sem ter como
- * testar, chutei errado ao "corrigir" isso olhando o código da extensão SEI
- * Pro (SEI-Pro/sei-pro no GitHub): lá, o tipo configurado (ex. "Anexo") já é
- * escolhido DIRETO como externo. Troquei pra esse caminho.
+ * Agora nenhuma tela é aberta: as páginas do SEI são lidas com fetch e o
+ * cadastro é enviado direto ao servidor, o mesmo caminho da extensão SEI Pro
+ * (SEI-Pro/sei-pro, dist/js/sei-pro-arvore.js). A sequência, por arquivo:
+ *   1. GET em documento_escolher_tipo (link do "Incluir Documento" da árvore);
+ *   2. GET no link documento_receber ou, no SEI 5, POST com hdnIdSerie=-1;
+ *   3. multipart com `filArquivo` na URL do `new infraUpload(...)` da página,
+ *      que responde `id#nome#tipo#tamanho#dataHora`;
+ *   4. POST do formulário #frmDocumentoCadastro com os valores decididos aqui.
  *
- * 2ª tentativa (a que o usuário testou de verdade): escolher "Anexo" direto
- * abriu a tela de GERAR DOCUMENTO (com "Texto Inicial: Documento
- * Modelo/Texto Padrão/Nenhum", editor embutido) - SEM nenhum campo de
- * arquivo. Prova de que, NESTA instalação (SES-PE), "Anexo" é um tipo
- * INTERNO (com modelo/editor), não externo - diferente do ambiente onde a
- * SEI Pro foi testada. A suposição original (tipo genérico "Externo" que leva
- * à tela de upload, com "Tipo do Documento" como classificação DENTRO do
- * cadastro do Externo) era a certa pra cá. Revertido.
+ * O que os testes reais das versões anteriores provaram e continua valendo:
+ *   - nesta instalação "Anexo" é tipo interno: o documento nasce como "Externo"
+ *     e "Anexo" entra como a classificação (selSerie) dentro do cadastro;
+ *   - "Número" é obrigatório e diferente de "Nome na Árvore" (gerarNumeroDocumento_);
+ *   - hdnStaNivelAcessoLocal e hdnIdHipoteseLegal espelham o radio e o select.
  *
- * O mesmo teste revelou outro bug real: a tela pediu "Informe o Número" e
- * nada foi salvo - "Número" é um campo DIFERENTE de "Nome na Árvore"
- * (confirmado na tela: os dois aparecem lado a lado) e é OBRIGATÓRIO. Como
- * não existe um "número" natural pra um arquivo solto do lote, a extensão
- * agora GERA um identificador automático pra esse campo (pedido do usuário -
- * "faça um gerador de ID") - ver gerarNumeroDocumento_.
- *
- * O que ainda fica de pé da checagem no código da SEI Pro (não contestado
- * pelo teste real): formato padrão "Nato-digital" e os nomes reais dos campos
- * (`filArquivo`, `txtDataElaboracao`, `txtNumero`, `txtNomeArvore`), usados
- * como fallback do rótulo visível.
- *
- * O que CONTINUA sendo suposição, sem confirmação num teste real completo
- * (até o arquivo realmente aparecer anexado no processo):
- *   1. Que depois de salvar, a tela volta pro MESMO processo sem recarregar o
- *      documento do topo - por isso o próximo arquivo da fila é processado em
- *      seguida. Se o SEI navegar/recarregar ao salvar, a fila em memória se
- *      perde e só os arquivos já enviados ficam registrados - o painel avisa
- *      quantos faltam nesse caso, em vez de travar.
- *   2. Que o botão "Salvar"/"Confirmar Dados" já usado pro resto do arquivo
- *      também existe nesta tela.
- *
- * Cada arquivo do lote usa o MESMO Tipo do Documento e Nível de Acesso,
- * configurados uma única vez no painel (decisão do usuário) - o nome de cada
- * arquivo vira o "Nome na Árvore" daquele documento.
+ * O SEI grava em ISO-8859-1: urlSei_ e codificarValorSei_ cuidam disso, senão
+ * "Relatório" chega trocado na árvore.
  */
 
-/**
- * Cronômetro de diagnóstico (pedido do usuário, 2026-09-04: "tem como ver
- * quanto tempo o SEI leva pra responder, pra otimizar direito?"). Loga
- * `rotulo` + quanto tempo passou desde `t0` (em ms), prefixado "[GAOCG
- * tempo]" pra ser fácil de filtrar no Console do DevTools, e devolve o
- * timestamp atual - encadeável, pra medir cada etapa sem precisar guardar
- * uma variável por etapa.
- */
-function marcarTempo_(t0, rotulo) {
-  const agora = Date.now();
-  console.log("[GAOCG tempo] " + rotulo + ": " + (agora - t0) + "ms");
-  return agora;
-}
+const CHAVE_ANEXO_TIPO_ = "anexoTipoDocumento";
+const CHAVE_ANEXO_NIVEL_ = "anexoNivelAcesso";
+const ID_ZONA_ANEXO_ = "gaocgZonaAnexo";
+const ID_STATUS_ANEXO_ = "gaocgStatusAnexo";
+const NOME_NIVEL_ANEXO_ = { publico: "Público", restrito: "Restrito", sigiloso: "Sigiloso" };
+const LIMITE_LEITURA_SEI_MS_ = 60000;
+const LIMITE_UPLOAD_SEI_MS_ = 600000;
+const LIMITE_SALVAR_SEI_MS_ = 120000;
+/** Na tela real, "Controle Interno" tem value="1" nesta instalação (HTML confirmado em 2026-09-04); usado só se a página vier sem as opções, que o SEI costuma carregar depois. */
+const HIPOTESE_CONTROLE_INTERNO_PADRAO_ = "1";
 
-/** Data de hoje no formato dd/mm/aaaa, como os campos de data do SEI esperam. */
+let configAnexo_ = { tipoDocumento: "Anexo", nivelAcesso: "publico" };
+
+/** Contador em memória: dois arquivos do mesmo lote nunca geram o mesmo "Número". */
+let contadorLote_ = 0;
+
 function dataHojeSei_() {
   const d = new Date();
   const dd = String(d.getDate()).padStart(2, "0");
@@ -1331,56 +1310,12 @@ function dataHojeSei_() {
   return dd + "/" + mm + "/" + d.getFullYear();
 }
 
-/** Nome do arquivo sem a extensão, pra usar como "Nome na Árvore". */
 function nomeSemExtensao_(nomeArquivo) {
   const i = nomeArquivo.lastIndexOf(".");
   return i > 0 ? nomeArquivo.slice(0, i) : nomeArquivo;
 }
 
-/**
- * Anexa um `File` real (vindo de um evento de drop) a um `<input type=file>`
- * via DataTransfer - é o único jeito de programaticamente colocar um arquivo
- * num input desses (não dá pra atribuir `.value`, por segurança do browser).
- */
-function anexarArquivoAoInput_(inputArquivo, arquivo) {
-  try {
-    const dt = new DataTransfer();
-    dt.items.add(arquivo);
-    inputArquivo.files = dt.files;
-    dispararChange_(inputArquivo);
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-
-/**
- * Contador em memória - garante que dois arquivos do MESMO lote nunca gerem o
- * mesmo "Número" mesmo se disparados no mesmo segundo (ver gerarNumeroDocumento_).
- */
-let contadorLote_ = 0;
-
-/**
- * true enquanto um lote está sendo processado - achado 2026-09-04 (medição
- * real de tempo): o relógio que reposiciona a caixa de anotação
- * (setInterval a cada 2s, ver inicialização no fim do arquivo) varre a
- * página inteira (todos os `a`/`span`/`div`, em todos os iframes) e ficava
- * rodando o tempo todo, inclusive durante o lote - competindo por CPU bem na
- * hora que a escolha do tipo "Externo" ficava progressivamente mais lenta
- * (4,5s → 8s ao longo do lote, sinal de acúmulo de iframes na página do SEI
- * a cada "Incluir Documento"). Usado pra pausar esse relógio enquanto o lote
- * roda, já que a caixa de anotação não precisa se mexer nesse meio tempo.
- */
-let gaocgLoteEmAndamento_ = false;
-
-/**
- * Gera um "Número" automático pro Documento Externo - achado 2026-09-03 (teste
- * real): esse campo é DIFERENTE de "Nome na Árvore" e é OBRIGATÓRIO (alerta
- * "Informe o Número" bloqueava o salvamento, e nada era anexado). Como o fluxo
- * de lote não tem um número real de processo/documento pra usar, gera um
- * identificador só pra satisfazer a obrigatoriedade - carimbo de data/hora +
- * contador, então nunca colide dentro do mesmo lote nem entre lotes.
- */
+/** Identificador para o campo "Número": um arquivo solto não tem número próprio, e o SEI o exige. */
 function gerarNumeroDocumento_() {
   const d = new Date();
   const pad = n => String(n).padStart(2, "0");
@@ -1390,653 +1325,561 @@ function gerarNumeroDocumento_() {
     + "-" + String(contadorLote_).padStart(3, "0");
 }
 
-/* ===================== varredura ISOLADA, só do envio em lote =====================
+/* -------- conversa com o servidor do SEI -------- */
+
+function charsetDaResposta_(resposta, bytes) {
+  const doCabecalho = /charset=["']?([\w-]+)/i.exec(resposta.headers.get("content-type") || "");
+  if (doCabecalho) return doCabecalho[1];
+  const inicio = new TextDecoder("latin1").decode(bytes.slice(0, 2048));
+  const daPagina = /<meta[^>]+charset=["']?([\w-]+)/i.exec(inicio);
+  return daPagina ? daPagina[1] : "iso-8859-1";
+}
+
+/** fetch com limite de tempo que já devolve o texto decodificado e a página interpretada. */
+async function pedirSei_(url, opcoes, limiteMs) {
+  const controle = new AbortController();
+  const limite = setTimeout(() => controle.abort(), limiteMs || LIMITE_LEITURA_SEI_MS_);
+  try {
+    const resposta = await fetch(url, Object.assign(
+      { credentials: "same-origin", cache: "no-store", signal: controle.signal }, opcoes || {}
+    ));
+    if (!resposta.ok) throw new Error("O SEI respondeu com erro (HTTP " + resposta.status + ").");
+    const bytes = await resposta.arrayBuffer();
+    const charset = charsetDaResposta_(resposta, bytes);
+    let texto;
+    try {
+      texto = new TextDecoder(charset).decode(bytes);
+    } catch (e) {
+      texto = new TextDecoder("iso-8859-1").decode(bytes);
+    }
+    const doc = new DOMParser().parseFromString(texto, "text/html");
+    if (doc.querySelector("#frmLogin, #pwdSenha, input[type=password]")) {
+      throw new Error("A sessão do SEI expirou. Entre novamente e solte o arquivo de novo.");
+    }
+    return { url: resposta.url, texto: texto, doc: doc, charset: charset };
+  } catch (e) {
+    if (e && e.name === "AbortError") throw new Error("O SEI demorou demais para responder.");
+    throw e;
+  } finally {
+    clearTimeout(limite);
+  }
+}
+
+const SUBSTITUTOS_LATIN1_ = {
+  "–": "-", "—": "-", "‘": "'", "’": "'", "“": '"', "”": '"',
+  "…": "...", " ": " ", "•": "-", "€": "EUR"
+};
+
+/** Percent-encoding no charset da página. Fora do ISO-8859-1, troca pelo equivalente mais próximo. */
+function codificarValorSei_(valor, charset) {
+  const texto = String(valor === undefined || valor === null ? "" : valor).normalize("NFC");
+  if (/utf-?8/i.test(charset || "")) return encodeURIComponent(texto);
+  let saida = "";
+  for (const caractere of texto) {
+    const convertido = caractere.codePointAt(0) > 255 ? (SUBSTITUTOS_LATIN1_[caractere] || "_") : caractere;
+    for (const c of convertido) {
+      const codigo = c.charCodeAt(0);
+      saida += /[A-Za-z0-9\-_.~]/.test(c) ? c : "%" + codigo.toString(16).toUpperCase().padStart(2, "0");
+    }
+  }
+  return saida;
+}
+
+function corpoFormularioSei_(campos, charset) {
+  return campos
+    .map(par => codificarValorSei_(par[0], charset) + "=" + codificarValorSei_(par[1], charset))
+    .join("&");
+}
+
+function cabecalhoFormularioSei_(charset) {
+  return { "Content-Type": "application/x-www-form-urlencoded; charset=" + (charset || "iso-8859-1") };
+}
+
+/** Pares [nome, valor] do que um navegador enviaria deste formulário. */
+function camposDoFormulario_(form) {
+  const campos = [];
+  for (const el of Array.from(form.querySelectorAll("input[name], select[name], textarea[name]"))) {
+    if (el.disabled) continue;
+    const tag = el.tagName.toLowerCase();
+    if (tag === "select") {
+      for (const opcao of Array.from(el.selectedOptions)) campos.push([el.name, opcao.value]);
+      continue;
+    }
+    if (tag === "input") {
+      const tipo = (el.getAttribute("type") || "text").toLowerCase();
+      if (["file", "button", "submit", "image", "reset"].includes(tipo)) continue;
+      if ((tipo === "radio" || tipo === "checkbox") && !el.checked) continue;
+    }
+    campos.push([el.name, el.value]);
+  }
+  return campos;
+}
+
+function definirCampo_(campos, nome, valor) {
+  const restantes = campos.filter(par => par[0] !== nome);
+  campos.length = 0;
+  campos.push(...restantes, [nome, valor]);
+}
+
+/** Link do "Incluir Documento": está no script da árvore (Nos[0].acoes) e, às vezes, na barra da direita. */
+function acharLinkIncluirDocumento_() {
+  const padrao = /controlador\.php\?acao=documento_escolher_tipo[^"'\\\s<>]*/;
+  const documentos = documentosDisponiveis_();
+  for (const doc of documentos) {
+    for (const script of Array.from(doc.querySelectorAll("script:not([src])"))) {
+      const achado = padrao.exec(script.textContent || "");
+      if (achado) return new URL(achado[0].replace(/&amp;/g, "&"), doc.baseURI).href;
+    }
+  }
+  for (const doc of documentos) {
+    const icone = doc.querySelector('a[href*="documento_escolher_tipo"], a[title="Incluir Documento"], img[title="Incluir Documento"]');
+    const ancora = icone && (icone.closest("a") || icone);
+    if (ancora && /acao=/.test(ancora.getAttribute("href") || "")) return ancora.href;
+  }
+  return null;
+}
+
+/** Da lista de tipos até o cadastro do Documento Externo. */
+async function abrirCadastroExterno_(linkTipos) {
+  const tipos = await pedirSei_(linkTipos);
+  if (tipos.doc.querySelector("#frmDocumentoCadastro")) return tipos;
+
+  const ancoras = Array.from(tipos.doc.querySelectorAll('a[href*="acao=documento_receber"]'));
+  const direta = ancoras.find(a => /[?&]id_serie=-1(&|$)/.test(a.getAttribute("href"))) || ancoras[0];
+  if (direta) return pedirSei_(new URL(direta.getAttribute("href"), tipos.url).href);
+
+  // SEI 5: toda âncora da lista tem href="#", e a escolha sai por POST.
+  const form = tipos.doc.querySelector("#frmDocumentoEscolherTipo");
+  const temExterno = tipos.doc.querySelector('input[value="-1"]') ||
+    Array.from(tipos.doc.querySelectorAll("a")).some(a => (a.textContent || "").trim().toLowerCase() === "externo");
+  if (!form || !temExterno) throw new Error('Não encontrei o tipo "Externo" na lista do SEI.');
+
+  const campos = camposDoFormulario_(form);
+  definirCampo_(campos, "hdnIdSerie", "-1");
+  return pedirSei_(new URL(form.getAttribute("action") || tipos.url, tipos.url).href, {
+    method: "POST",
+    headers: cabecalhoFormularioSei_(tipos.charset),
+    body: corpoFormularioSei_(campos, tipos.charset)
+  });
+}
+
+function urlUploadDoCadastro_(pagina) {
+  const achado = /new\s+infraUpload\(\s*['"][^'"]*['"]\s*,\s*['"]([^'"]+)['"]/.exec(pagina.texto);
+  if (achado) return new URL(achado[1].replace(/&amp;/g, "&"), pagina.url).href;
+  const form = pagina.doc.querySelector("#frmAnexos");
+  return form && form.getAttribute("action") ? new URL(form.getAttribute("action"), pagina.url).href : null;
+}
+
+/** O SEI separa a resposta do upload com "#" e lê o nome em ISO-8859-1: só o nome interno do anexo muda, não o da árvore. */
+function nomeSeguroParaUpload_(nome) {
+  return nome.normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[&/\\#+()$~%'":*?<>{}]/g, "_")
+    .replace(/[^\x20-\x7E]/g, "_");
+}
+
+function textoSemTags_(texto) {
+  return String(texto || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+async function subirArquivoSei_(arquivo, urlUpload, pagina) {
+  const dados = new FormData();
+  const formAnexos = pagina.doc.querySelector("#frmAnexos");
+  if (formAnexos) {
+    for (const par of camposDoFormulario_(formAnexos)) dados.append(par[0], par[1]);
+  }
+  const nome = nomeSeguroParaUpload_(arquivo.name);
+  dados.append("filArquivo", new File([arquivo], nome, { type: arquivo.type }), nome);
+
+  const resposta = await pedirSei_(urlUpload, { method: "POST", body: dados }, LIMITE_UPLOAD_SEI_MS_);
+  const texto = textoSemTags_(resposta.texto);
+  const partes = texto.split("#");
+  if (partes.length < 5 || !partes[0] || partes[0].toUpperCase() === "ERRO" || !/^\d+$/.test(partes[3])) {
+    console.warn("[GAOCG anexo] resposta inesperada do upload:", texto.slice(0, 300));
+    throw new Error("O SEI recusou o arquivo" + (texto ? ": " + texto.slice(0, 160) : "."));
+  }
+  return { id: partes[0], nome: partes[1], tamanho: partes[3], dataHora: partes[4] };
+}
+
+function tamanhoFormatado_(bytes) {
+  const n = Number(bytes);
+  if (n < 1024) return n + " bytes";
+  if (n < 1048576) return (n / 1024).toFixed(2) + " Kb";
+  if (n < 1073741824) return (n / 1048576).toFixed(2) + " Mb";
+  return (n / 1073741824).toFixed(2) + " Gb";
+}
+
+/** Usuário e unidade que o próprio SEI mostraria na tabela de anexos (últimos valores do objTabelaAnexos.adicionar). */
+function autorDoAnexo_(texto) {
+  const achado = /objTabelaAnexos\.adicionar\(\s*\[[\s\S]*?,\s*['"]([^'"]*)['"]\s*,\s*['"]([^'"]*)['"]\s*\]\s*\)/.exec(texto);
+  return achado ? { usuario: achado[1], unidade: achado[2] } : { usuario: "", unidade: "" };
+}
+
+function opcaoDoTipo_(select, tipo) {
+  const alvo = tipo.trim().toLowerCase();
+  const opcoes = Array.from(select.options).filter(o => o.value && o.value !== "null");
+  const texto = o => (o.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+  return opcoes.find(o => texto(o) === alvo) || opcoes.find(o => texto(o).indexOf(alvo) !== -1) || null;
+}
+
+function valorHipoteseLegal_(form, nivelAcesso) {
+  if (nivelAcesso === "publico") return "";
+  const select = form.querySelector('#selHipoteseLegal, [name="selHipoteseLegal"]');
+  const opcoes = select ? Array.from(select.options).filter(o => o.value && o.value !== "null") : [];
+  const controleInterno = opcoes.find(o => (o.textContent || "").toLowerCase().indexOf("controle interno") !== -1);
+  if (controleInterno) return controleInterno.value;
+  if (opcoes.length) throw new Error('Não encontrei a Hipótese Legal "Controle Interno" no SEI.');
+  console.warn("[GAOCG anexo] página sem as opções de Hipótese Legal; usando o valor conhecido de Controle Interno.");
+  return HIPOTESE_CONTROLE_INTERNO_PADRAO_;
+}
+
+/** Monta o cadastro a partir do que o SEI entregou. A data sai daqui, sem depender do JavaScript da tela. */
+function camposDoCadastroExterno_(form, arquivo, config, anexo, autor) {
+  const selSerie = form.querySelector('#selSerie, [name="selSerie"]');
+  const serie = selSerie && opcaoDoTipo_(selSerie, config.tipoDocumento);
+  if (!serie) throw new Error('Não encontrei o tipo "' + config.tipoDocumento + '" no cadastro do SEI.');
+
+  const nivel = MAPA_NIVEL_ACESSO[config.nivelAcesso] || "0";
+  const hipotese = valorHipoteseLegal_(form, config.nivelAcesso);
+  const campoNome = form.querySelector('#txtNomeArvore, [name="txtNomeArvore"]');
+  const limiteNome = Number(campoNome && campoNome.getAttribute("maxlength")) || 50;
+
+  const campos = camposDoFormulario_(form);
+  const definicoes = {
+    selSerie: serie.value,
+    hdnIdSerie: serie.value,
+    rdoNivelAcesso: nivel,
+    hdnStaNivelAcessoLocal: nivel,
+    rdoFormato: "N",
+    selTipoConferencia: "",
+    hdnIdTipoConferencia: "",
+    selHipoteseLegal: hipotese,
+    hdnIdHipoteseLegal: hipotese,
+    hdnFlagDocumentoCadastro: "2",
+    txtDataElaboracao: dataHojeSei_(),
+    txtNomeArvore: nomeSemExtensao_(arquivo.name).slice(0, limiteNome),
+    hdnAnexos: [
+      anexo.id, anexo.nome, anexo.dataHora, anexo.tamanho,
+      tamanhoFormatado_(anexo.tamanho), autor.usuario, autor.unidade
+    ].join("±")
+  };
+  if (form.querySelector('#txtNumero, [name="txtNumero"]')) definicoes.txtNumero = gerarNumeroDocumento_();
+  for (const nome of Object.keys(definicoes)) definirCampo_(campos, nome, definicoes[nome]);
+  return campos;
+}
+
+function mensagemDeRecusaSei_(doc) {
+  const seletores = "#divInfraExcecao, .infraExcecao, .infraMensagem, .alert, [role=alert]";
+  for (const el of Array.from(doc.querySelectorAll(seletores))) {
+    const texto = (el.textContent || "").replace(/\s+/g, " ").trim();
+    if (texto.length > 5 && texto.length < 300) return texto;
+  }
+  return "";
+}
+
+/** Envia UM arquivo. Qualquer problema vira exceção com mensagem para o usuário. */
+async function anexarArquivoNoSei_(arquivo, config) {
+  const linkTipos = await aguardarCondicao_(acharLinkIncluirDocumento_, 8000, 200);
+  if (!linkTipos) {
+    throw new Error('Não encontrei "Incluir Documento" neste processo. Confira se ele está aberto na sua unidade.');
+  }
+
+  const cadastro = await abrirCadastroExterno_(linkTipos);
+  const form = cadastro.doc.querySelector("#frmDocumentoCadastro");
+  if (!form) throw new Error("O cadastro do Documento Externo não abriu.");
+  const urlUpload = urlUploadDoCadastro_(cadastro);
+  if (!urlUpload) throw new Error("Não encontrei o endereço de upload na tela do SEI.");
+
+  const anexo = await subirArquivoSei_(arquivo, urlUpload, cadastro);
+  const campos = camposDoCadastroExterno_(form, arquivo, config, anexo, autorDoAnexo_(cadastro.texto));
+
+  let salvo;
+  try {
+    salvo = await pedirSei_(new URL(form.getAttribute("action") || cadastro.url, cadastro.url).href, {
+      method: "POST",
+      headers: cabecalhoFormularioSei_(cadastro.charset),
+      body: corpoFormularioSei_(campos, cadastro.charset)
+    }, LIMITE_SALVAR_SEI_MS_);
+  } catch (e) {
+    throw new Error("O SEI não confirmou a gravação (" + e.message + "). Confira a árvore antes de enviar de novo.");
+  }
+
+  if (/acao=arvore_visualizar/.test(salvo.url) && !salvo.doc.querySelector("#frmDocumentoCadastro")) return;
+
+  console.warn("[GAOCG anexo] gravação não confirmada:", salvo.url, salvo.texto.slice(0, 500));
+  const recusa = mensagemDeRecusaSei_(salvo.doc);
+  throw new Error(recusa
+    ? 'O SEI recusou: "' + recusa + '"'
+    : "O SEI não confirmou a gravação. Confira a árvore antes de enviar de novo.");
+}
+
+/* -------- fila de envio -------- */
+
+const filaAnexos_ = [];
+let resultadosAnexos_ = [];
+let anexoEmAndamento_ = false;
+
+function enfileirarAnexos_(arquivos) {
+  const config = Object.assign({}, configAnexo_);
+  for (const arquivo of arquivos) filaAnexos_.push({ arquivo: arquivo, config: config });
+  if (!anexoEmAndamento_) processarFilaAnexos_();
+}
+
+async function processarFilaAnexos_() {
+  anexoEmAndamento_ = true;
+  resultadosAnexos_ = [];
+  while (filaAnexos_.length) {
+    const item = filaAnexos_.shift();
+    const atual = resultadosAnexos_.length + 1;
+    mostrarProgressoAnexo_(atual, atual + filaAnexos_.length, item.arquivo.name);
+    try {
+      await anexarArquivoNoSei_(item.arquivo, item.config);
+      resultadosAnexos_.push({ ok: true, nome: item.arquivo.name });
+    } catch (e) {
+      const erro = String(e && e.message ? e.message : e);
+      console.warn("[GAOCG anexo] falhou:", item.arquivo.name, erro);
+      resultadosAnexos_.push({ ok: false, nome: item.arquivo.name, erro: erro });
+    }
+  }
+  anexoEmAndamento_ = false;
+  mostrarResultadoAnexos_(resultadosAnexos_);
+  atualizarArvoreProcesso_();
+}
+
+/** Mostra os documentos novos sem mexer no que o usuário está lendo do lado direito. */
+function atualizarArvoreProcesso_() {
+  const area = acharAreaArvore_();
+  try {
+    if (area && area.contentWindow) area.contentWindow.location.reload();
+    else location.reload();
+  } catch (e) {
+    location.reload();
+  }
+}
+
+/* -------- aviso de progresso (não bloqueia a tela) -------- */
+
+function caixaStatusAnexo_() {
+  let caixa = document.getElementById(ID_STATUS_ANEXO_);
+  if (caixa) return caixa;
+  garantirEstiloPainel_();
+  caixa = document.createElement("div");
+  caixa.id = ID_STATUS_ANEXO_;
+  caixa.innerHTML = `
+    <div class="gaocg-status-linha">
+      <div class="gaocg-spinner"></div>
+      <div class="gaocg-status-texto"></div>
+      <button type="button" title="Fechar">×</button>
+    </div>
+    <div class="gaocg-barra"><div class="gaocg-barra-preenc"></div></div>
+    <ul class="gaocg-status-erros" hidden></ul>
+  `;
+  caixa.querySelector("button").addEventListener("click", () => { caixa.hidden = true; });
+  document.body.appendChild(caixa);
+  return caixa;
+}
+
+let temporizadorStatusAnexo_ = null;
+
+function mostrarProgressoAnexo_(atual, total, nome) {
+  clearTimeout(temporizadorStatusAnexo_);
+  const caixa = caixaStatusAnexo_();
+  caixa.hidden = false;
+  caixa.classList.remove("gaocg-status-fim");
+  caixa.querySelector(".gaocg-status-texto").textContent = "Anexando " + atual + " de " + total + ": " + nome;
+  caixa.querySelector(".gaocg-barra-preenc").style.width = Math.round(((atual - 1) / total) * 100) + "%";
+  caixa.querySelector(".gaocg-status-erros").hidden = true;
+}
+
+function mostrarResultadoAnexos_(resultados) {
+  const caixa = caixaStatusAnexo_();
+  const falhas = resultados.filter(r => !r.ok);
+  const certos = resultados.length - falhas.length;
+  caixa.hidden = false;
+  caixa.classList.add("gaocg-status-fim");
+  caixa.querySelector(".gaocg-barra-preenc").style.width = "100%";
+  caixa.querySelector(".gaocg-status-texto").textContent = certos + " de " + resultados.length + " arquivo(s) anexado(s).";
+  const lista = caixa.querySelector(".gaocg-status-erros");
+  lista.textContent = "";
+  for (const falha of falhas) {
+    const linha = document.createElement("li");
+    linha.textContent = falha.nome + ": " + falha.erro;
+    lista.appendChild(linha);
+  }
+  lista.hidden = !falhas.length;
+  // Falha fica na tela até o usuário fechar: é o único registro do que não entrou.
+  if (!falhas.length) temporizadorStatusAnexo_ = setTimeout(() => { caixa.hidden = true; }, 6000);
+}
+
+/* -------- área de soltar sobre a coluna da árvore --------
  *
- * Pedido do usuário (2026-09-04): separar essa funcionalidade da que a SOF/NE/
- * Recibo usa, pra poder otimizar o envio em lote (velocidade, comportamento de
- * espera etc.) sem NENHUM risco de afetar aqueles fluxos, que já estão
- * comprovados funcionando de verdade em testes reais.
- *
- * Daqui pra baixo, cada função tem uma versão própria com sufixo `Lote_`:
- *   - cópias de funções REALMENTE compartilhadas com a SOF/NE/Recibo
- *     (`documentosDisponiveis_`, `acharEm_`, `acharTodos_`, `documentoComTexto_`,
- *     `todosElementos_`, `campoPorRotulo_`, `abrirIncluirDocumento_`,
- *     `escolherTipoDocumento_`, `chegouTelaCadastro_`) - os originais continuam
- *     intactos, só pra SOF/NE/Recibo;
- *   - `forcarOpcaoPorRotuloLote_`, `marcarRadioReforcadoLote_`,
- *     `selecionarEmSelectPorRotuloLote_`, `campoPorRotuloOuNomeLote_` e
- *     `selecionarOpcaoPorTextoLote_` JÁ eram exclusivas do envio em lote antes
- *     desta separação (a SOF nunca as usou) - os originais sem sufixo foram
- *     REMOVIDOS (ficariam mortos, sem uso), não só duplicados.
- * Usadas SÓ por `enviarArquivoComoExterno_` a partir de agora. Utilitários realmente
- * genéricos e sem estado (`esperar_`, `dispararChange_`, `teclar_`,
- * `clicarComoUsuario_`, `textoNormalizado_`, `aguardarCondicao_`,
- * `SELETOR_CAMPO_`, `itemDaLista_` - este último já recebe o escopo por
- * parâmetro, não tem estado compartilhado pra isolar) continuam reaproveitados
- * como estavam - não haveria ganho nenhum em duplicá-los.
+ * Os eventos de arrastar não atravessam iframes: quem detecta o arquivo chegando
+ * é o documento da árvore. Daí em diante uma camada no documento do topo cobre a
+ * coluna inteira e recebe o drop - assim funciona também quando a árvore é longa
+ * e sobra pouco espaço vazio, e por cima da caixa de anotação.
  */
 
-/** Documento do topo + todos os iframes de mesma origem (recursivo) - cópia isolada pro envio em lote. */
-function documentosDisponiveisLote_(doc) {
-  doc = doc || document;
-  const lista = [doc];
-  for (const frame of Array.from(doc.querySelectorAll("iframe, frame"))) {
+function acharAreaArvore_() {
+  const direta = acharEm_('iframe#ifrArvore, iframe[name="ifrArvore"], frame#ifrArvore, frame[name="ifrArvore"]');
+  if (direta) return direta;
+  for (const doc of documentosDisponiveis_()) {
+    for (const frame of Array.from(doc.querySelectorAll("iframe, frame"))) {
+      let interno = null;
+      try { interno = frame.contentDocument; } catch (e) { interno = null; }
+      const texto = interno && interno.body ? interno.body.textContent || "" : "";
+      if (texto.indexOf("Consultar Andamento") !== -1) return frame;
+    }
+  }
+  return acharEm_("#divArvore");
+}
+
+/** Retângulo do elemento nas coordenadas do documento do topo, somando os iframes no caminho. */
+function retanguloNoTopo_(el) {
+  const r = el.getBoundingClientRect();
+  let esquerda = r.left;
+  let topo = r.top;
+  let janela = el.ownerDocument.defaultView;
+  while (janela && janela !== window && janela.frameElement) {
+    const f = janela.frameElement.getBoundingClientRect();
+    esquerda += f.left;
+    topo += f.top;
+    janela = janela.parent;
+  }
+  return { left: esquerda, top: topo, width: r.width, height: r.height };
+}
+
+function trazArquivos_(evento) {
+  const tipos = evento.dataTransfer && evento.dataTransfer.types;
+  return !!tipos && Array.from(tipos).includes("Files");
+}
+
+let temporizadorZonaAnexo_ = null;
+
+function zonaAnexo_() {
+  let zona = document.getElementById(ID_ZONA_ANEXO_);
+  if (zona) return zona;
+  garantirEstiloPainel_();
+  zona = document.createElement("div");
+  zona.id = ID_ZONA_ANEXO_;
+  zona.hidden = true;
+  zona.innerHTML = '<div class="gaocg-zona-titulo">Solte para anexar a este processo</div><div class="gaocg-zona-config"></div>';
+  ["dragenter", "dragover"].forEach(tipo => zona.addEventListener(tipo, e => {
+    if (!trazArquivos_(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "copy";
+    mostrarZonaAnexo_();
+  }));
+  zona.addEventListener("drop", receberArquivosSoltos_);
+  document.body.appendChild(zona);
+  return zona;
+}
+
+function esconderZonaAnexo_() {
+  clearTimeout(temporizadorZonaAnexo_);
+  const zona = document.getElementById(ID_ZONA_ANEXO_);
+  if (zona) zona.hidden = true;
+}
+
+/** Enquanto o arquivo estiver em cima, os eventos não param; meio segundo sem nenhum significa que saiu ou desistiu. */
+function mostrarZonaAnexo_() {
+  const area = acharAreaArvore_();
+  if (!area) return;
+  const zona = zonaAnexo_();
+  const r = retanguloNoTopo_(area);
+  zona.style.left = r.left + "px";
+  zona.style.top = r.top + "px";
+  zona.style.width = r.width + "px";
+  zona.style.height = r.height + "px";
+  zona.querySelector(".gaocg-zona-config").textContent =
+    "Tipo: " + configAnexo_.tipoDocumento + " · Nível: " + (NOME_NIVEL_ANEXO_[configAnexo_.nivelAcesso] || NOME_NIVEL_ANEXO_.publico);
+  zona.hidden = false;
+  clearTimeout(temporizadorZonaAnexo_);
+  temporizadorZonaAnexo_ = setTimeout(esconderZonaAnexo_, 500);
+}
+
+function receberArquivosSoltos_(evento) {
+  if (!trazArquivos_(evento)) return;
+  evento.preventDefault();
+  evento.stopPropagation();
+  esconderZonaAnexo_();
+  if (!ferramentasSeiAtivas_) return;
+
+  const arquivos = [];
+  let pastas = 0;
+  for (const item of Array.from(evento.dataTransfer.items || [])) {
+    if (item.kind !== "file") continue;
+    const entrada = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+    if (entrada && entrada.isDirectory) { pastas += 1; continue; }
+    const arquivo = item.getAsFile();
+    if (arquivo) arquivos.push(arquivo);
+  }
+  if (pastas) avisarNaTela_("GAOCG: pastas não são anexadas. Arraste os arquivos de dentro dela.");
+  if (arquivos.length) enfileirarAnexos_(arquivos);
+}
+
+const documentosComArraste_ = new WeakSet();
+
+function ligarArrasteNoDocumento_(doc) {
+  if (documentosComArraste_.has(doc)) return;
+  documentosComArraste_.add(doc);
+  const ehTopo = doc === document;
+  ["dragenter", "dragover"].forEach(tipo => doc.addEventListener(tipo, e => {
+    if (!ferramentasSeiAtivas_ || !trazArquivos_(e)) return;
+    e.preventDefault();
+    // Fora da coluna da árvore o drop é recusado: sem isso, o navegador abriria
+    // o arquivo no lugar da página do SEI.
+    e.dataTransfer.dropEffect = ehTopo ? "none" : "copy";
+    mostrarZonaAnexo_();
+  }));
+  if (!ehTopo) doc.addEventListener("drop", e => { if (ferramentasSeiAtivas_) receberArquivosSoltos_(e); });
+}
+
+/** A árvore recarrega e troca de documento com frequência: a cada recarga precisa ligar de novo. */
+function iniciarAnexoPorArraste_() {
+  ligarArrasteNoDocumento_(document);
+  const ligarArvore = () => {
+    const area = acharAreaArvore_();
     let interno = null;
-    try {
-      interno = frame.contentDocument;
-    } catch (e) {
-      interno = null; // cross-origin
-    }
-    if (interno) lista.push(...documentosDisponiveisLote_(interno));
-  }
-  return lista;
+    try { interno = area && area.contentDocument; } catch (e) { interno = null; }
+    if (interno) ligarArrasteNoDocumento_(interno);
+  };
+  ligarArvore();
+  setInterval(ligarArvore, 1000);
+  window.addEventListener("beforeunload", e => {
+    if (anexoEmAndamento_) { e.preventDefault(); e.returnValue = ""; }
+  });
 }
 
-function acharEmLote_(seletor) {
-  for (const doc of documentosDisponiveisLote_()) {
-    const el = doc.querySelector(seletor);
-    if (el) return el;
-  }
-  return null;
-}
-
-function acharTodosLote_(seletor) {
-  const encontrados = [];
-  for (const doc of documentosDisponiveisLote_()) {
-    encontrados.push(...Array.from(doc.querySelectorAll(seletor)));
-  }
-  return encontrados;
-}
-
-/** Documento (topo ou iframe) que contém um texto - cópia isolada pro envio em lote (ver documentoComTexto_). */
-function documentoComTextoLote_(trecho) {
-  const alvo = trecho.toLowerCase();
-  for (const doc of documentosDisponiveisLote_()) {
-    let texto = "";
-    try {
-      texto = (doc.body && (doc.body.innerText || doc.body.textContent)) || "";
-    } catch (e) {
-      texto = "";
-    }
-    if (texto.toLowerCase().indexOf(alvo) !== -1) return doc;
-  }
-  return null;
-}
-
-/** Todos os elementos de todos os documentos acessíveis - cópia isolada pro envio em lote. */
-function todosElementosLote_() {
-  const lista = [];
-  for (const doc of documentosDisponiveisLote_()) {
-    lista.push(...Array.from(doc.querySelectorAll("*")));
-  }
-  return lista;
-}
-
-/** Campo por rótulo visível - cópia isolada pro envio em lote (ver campoPorRotulo_). */
-function campoPorRotuloLote_(rotulo, tipoDesejado) {
-  const alvo = rotulo.toLowerCase();
-  const elementos = todosElementosLote_();
-
-  for (let i = 0; i < elementos.length; i++) {
-    const el = elementos[i];
-    if (el.children.length > 2) continue;
-    if (textoNormalizado_(el) !== alvo) continue;
-
-    if (el.tagName === "LABEL" && el.htmlFor) {
-      const porFor = el.ownerDocument.getElementById(el.htmlFor);
-      if (porFor) return porFor;
-    }
-    for (let j = i + 1; j < Math.min(i + 40, elementos.length); j++) {
-      const cand = elementos[j];
-      if (!cand.matches || !cand.matches(SELETOR_CAMPO_)) continue;
-      if (tipoDesejado && cand.tagName.toLowerCase() !== tipoDesejado) continue;
-      return cand;
-    }
-  }
-  return null;
-}
-
-/** Campo por rótulo (várias variações) OU pelo atributo `name` real do SEI - cópia isolada pro envio em lote. */
-function campoPorRotuloOuNomeLote_(rotulos, nomeAttr, tipoDesejado) {
-  for (const rotulo of rotulos) {
-    const campo = campoPorRotuloLote_(rotulo, tipoDesejado);
-    if (campo) return campo;
-  }
-  if (nomeAttr) {
-    const campo = acharEmLote_('[name="' + nomeAttr + '"]');
-    if (campo && (!tipoDesejado || campo.tagName.toLowerCase() === tipoDesejado)) return campo;
-  }
-  return null;
-}
-
-async function abrirIncluirDocumentoLote_() {
-  const seletor = [
-    'a[title="Incluir Documento"]',
-    'img[title="Incluir Documento"]',
-    'a[href*="documento_escolher_tipo"]'
-  ].join(", ");
-  const alvo = await aguardarCondicao_(() => acharEmLote_(seletor), 8000);
-  if (!alvo) return false;
-  (alvo.closest("a") || alvo).click();
-  return true;
-}
-
-/** "Nome na Árvore" é o marco confiável de que o cadastro chegou - cópia isolada pro envio em lote. */
-function chegouTelaCadastroLote_() {
-  return !!(acharEmLote_("#frmDocumentoCadastro") || campoPorRotuloLote_("Nome na Árvore"));
-}
-
-/**
- * Escolhe o tipo do documento - versão SIMPLIFICADA e isolada, só pro envio em
- * lote: assinatura direta (`filtro`, `rotulos`) em vez de `tipoGaocg` +
- * `MAPA_TIPO_DOCUMENTO` (o lote nunca usou essa tabela - sempre passava um
- * override completo) e sem suporte a `excluir` (não é usado aqui; o único
- * "tipo ambíguo" conhecido, SOF vs. e-SOF, é problema exclusivo do fluxo da
- * SOF). Mesma lógica de seleção (teclado primeiro, mouse como reforço).
- */
-async function escolherTipoDocumentoLote_(filtro, rotulos) {
-  if (!rotulos || !rotulos.length) return false;
-
-  // Intervalos de verificação (o 4º parâmetro de aguardarCondicao_) apertados
-  // agora que essa função é isolada só do lote (achado 2026-09-04, medição
-  // real: "escolher tipo Externo" leva uns 4,5s, dominado por espera real do
-  // SEI carregar a tela) - de 120/100/80ms pra 30ms, checa o dobro/triplo de
-  // vezes por segundo, então detecta a tela pronta um pouco mais cedo em
-  // média. Ganho pequeno (a maior parte do tempo continua sendo o SEI
-  // respondendo, não dá pra encurtar isso), mas sem custo nenhum de segurança
-  // agora que não compartilha mais com a SOF.
-  const escopo = await aguardarCondicao_(
-    () => documentoComTextoLote_("Escolha o Tipo do Documento"), 8000, 30
-  ) || document;
-
-  if (filtro) {
-    const filtroEl = await aguardarCondicao_(
-      () => Array.from(escopo.querySelectorAll('input[type=text], input:not([type])')).find(i => i.offsetParent !== null),
-      6000, 30
-    );
-    if (filtroEl) {
-      filtroEl.focus();
-      filtroEl.value = filtro;
-      filtroEl.dispatchEvent(new Event("input", { bubbles: true }));
-      teclar_(filtroEl, filtro.slice(-1), filtro.toUpperCase().charCodeAt(filtro.length - 1));
-      dispararChange_(filtroEl);
-
-      const apareceu = await aguardarCondicao_(() => itemDaLista_(escopo, rotulos), 6000, 30);
-      await esperar_(apareceu ? 40 : 250);
-      teclar_(filtroEl, "ArrowDown", 40);
-      await esperar_(40);
-      teclar_(filtroEl, "Enter", 13);
-      if (await aguardarCondicao_(chegouTelaCadastroLote_, 3500, 30)) return true;
-    }
-  }
-
-  const achado = await aguardarCondicao_(() => {
-    const select = escopo.querySelector("#selSerie");
-    if (select) {
-      const opcao = Array.from(select.options).find(o =>
-        rotulos.some(r => (o.textContent || "").toLowerCase().indexOf(r.toLowerCase()) !== -1));
-      if (opcao) return { tipo: "select", select: select, opcao: opcao };
-    }
-    const item = itemDaLista_(escopo, rotulos);
-    if (item) return { tipo: "item", item: item };
-    return null;
-  }, 8000, 30);
-
-  if (!achado) return false;
-  if (achado.tipo === "item") {
-    clicarComoUsuario_(achado.item);
-    return await aguardarCondicao_(chegouTelaCadastroLote_, 5000, 30) ? true : true;
-  }
-  achado.select.value = achado.opcao.value;
-  dispararChange_(achado.select);
-  return true;
-}
-
-/** Igual a forcarOpcaoPorRotulo_ - cópia isolada pro envio em lote (dispara clique+change mesmo se já marcado). */
-function forcarOpcaoPorRotuloLote_(rotulo) {
-  const alvo = rotulo.trim().toLowerCase();
-  for (const entrada of acharTodosLote_('input[type=radio], input[type=checkbox]')) {
-    let texto = "";
-    const doc = entrada.ownerDocument;
-    if (entrada.id) {
-      const lbl = doc.querySelector('label[for="' + entrada.id + '"]');
-      if (lbl) texto = textoNormalizado_(lbl);
-    }
-    if (!texto && entrada.parentElement) texto = textoNormalizado_(entrada.parentElement);
-    if (!texto && entrada.nextElementSibling) texto = textoNormalizado_(entrada.nextElementSibling);
-    if (texto === alvo) {
-      entrada.checked = true;
-      entrada.click();
-      dispararChange_(entrada);
-      return true;
-    }
-  }
-  return false;
-}
-
-/** 2 camadas (radio nativo + clique em elemento visível) - cópia isolada pro envio em lote. */
-async function marcarRadioReforcadoLote_(rotulo) {
-  if (forcarOpcaoPorRotuloLote_(rotulo)) return true;
-  const alvo = rotulo.trim().toLowerCase();
-  const elemento = acharTodosLote_("label, span, div, li, a, button").find(el =>
-    el.offsetParent !== null && el.children.length <= 2 && textoNormalizado_(el) === alvo
-  );
-  if (!elemento) return false;
-  clicarComoUsuario_(elemento);
-  await esperar_(150);
-  return true;
-}
-
-/** Igual a selecionarEmSelectPorRotulo_ - cópia isolada pro envio em lote. */
-function selecionarEmSelectPorRotuloLote_(rotulo, contendo) {
-  const campo = campoPorRotuloLote_(rotulo, "select");
-  if (!campo) return false;
-  const alvo = contendo.trim().toLowerCase();
-  const opcao = Array.from(campo.options).find(o => (o.textContent || "").toLowerCase().indexOf(alvo) !== -1);
-  if (!opcao) return false;
-  campo.value = opcao.value;
-  dispararChange_(campo);
-  return true;
-}
-
-/** <select> com uma opção contendo `trecho` - cópia isolada pro envio em lote. */
-function selecionarOpcaoPorTextoLote_(trecho) {
-  const alvo = trecho.trim().toLowerCase();
-  for (const select of acharTodosLote_("select")) {
-    const opcao = Array.from(select.options).find(o => (o.textContent || "").toLowerCase().indexOf(alvo) !== -1);
-    if (opcao) {
-      select.value = opcao.value;
-      dispararChange_(select);
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
- * Envia UM arquivo como Documento Externo. Cada etapa é best-effort e devolve
- * cedo com `erro` descritivo em vez de travar a fila inteira - um arquivo
- * problemático não pode impedir os outros.
- */
-async function enviarArquivoComoExterno_(arquivo, config) {
-  const tInicioArquivo = Date.now();
-  let t = tInicioArquivo;
-  console.log("[GAOCG tempo] --- iniciando " + arquivo.name + " ---");
-
-  // Diagnóstico (achado 2026-09-04, medição real: "escolher tipo Externo" foi
-  // de 4,5s a 8s, piorando a cada arquivo do lote) - conta quantos iframes
-  // existem na página nesse momento, pra confirmar (ou descartar) a suspeita
-  // de que o SEI vai acumulando iframes "mortos" de aberturas anteriores de
-  // "Incluir Documento", tornando a varredura de tela cada vez mais cara.
-  console.log("[GAOCG tempo] iframes na página antes de abrir Incluir Documento:", document.querySelectorAll("iframe, frame").length);
-
-  const abriu = await abrirIncluirDocumentoLote_();
-  t = marcarTempo_(t, "abrir Incluir Documento");
-  if (!abriu) return { ok: false, nome: arquivo.name, erro: 'Não encontrei "Incluir Documento".' };
-
-  // CORREÇÃO (achado 2026-09-03, teste real): escolher o tipo configurado
-  // (ex. "Anexo") DIRETO na tela "Escolha o Tipo do Documento" abre a tela de
-  // GERAR documento (com editor/"Texto Inicial"), não tem campo de arquivo
-  // nenhum - "Anexo" aqui é um tipo interno, não externo. Existe sim um tipo
-  // genérico "Externo" separado nesta instalação do SEI (a suposição original,
-  // antes de eu "corrigir" com base no código da extensão SEI Pro - que serve
-  // outro ambiente, onde a configuração dos tipos é diferente). Volta a
-  // escolher "Externo" primeiro; o tipo configurado no painel (ex. "Anexo")
-  // entra depois, como a CLASSIFICAÇÃO dentro do cadastro do Externo (campo
-  // "Tipo do Documento").
-  const tipoOk = await escolherTipoDocumentoLote_("Externo", ["Externo", "Documento Externo"]);
-  t = marcarTempo_(t, "escolher tipo Externo");
-  if (!tipoOk) return { ok: false, nome: arquivo.name, erro: 'Não encontrei o tipo "Externo" na lista do SEI.' };
-
-  // Marco de chegada: o input de arquivo é o sinal mais confiável de que a
-  // tela certa (cadastro de documento externo) abriu - mais confiável que um
-  // rótulo de texto, que pode vir composto.
-  const chegou = await aguardarCondicao_(
-    () => acharEmLote_('input[type="file"]') || acharEmLote_('[name="filArquivo"]') || acharEmLote_("#frmDocumentoCadastro"),
-    12000, 250
-  );
-  t = marcarTempo_(t, "chegar no cadastro do Documento Externo");
-  if (!chegou) return { ok: false, nome: arquivo.name, erro: "O cadastro do Documento Externo não abriu." };
-
-  // A PARTIR DAQUI: campos por NOME/ID REAL, não mais por rótulo visível nem
-  // "reforço" de clique. Achado 2026-09-04, cavando o código da extensão SEI
-  // Pro mais a fundo (função `submitUploadArvore`, que de fato monta e
-  // envia o cadastro de Documento Externo pro SEI): os 3 erros anteriores
-  // ("Informe o Formato", "Nível de acesso local não informado", Hipótese
-  // Legal vazia) tinham uma causa em comum - alguns desses campos são
-  // DUPLICADOS: um radio/select VISÍVEL e um `<input type=hidden>` que
-  // precisa ter o MESMO valor, e clicar no radio visível não escreve
-  // sozinho no hidden correspondente. Nomes/ids reais confirmados no código
-  // deles:
-  //   selSerie            - select "Tipo do Documento"
-  //   rdoNivelAcesso       - radio Nível de Acesso (valor "0"/"1"/"2", igual
-  //                          ao MAPA_NIVEL_ACESSO já usado no resto do arquivo)
-  //   hdnStaNivelAcessoLocal - hidden, PRECISA ter o MESMO valor de rdoNivelAcesso
-  //                          (esse é o campo do erro "Nível de acesso local")
-  //   rdoFormato           - radio Formato (valor "N" = Nato-digital, "D" = Digitalizado)
-  //   selHipoteseLegal / hdnIdHipoteseLegal - select + hidden espelhado, MESMO valor
-  //   hdnFlagDocumentoCadastro - hidden fixo "2"
-  //   txaObservacoes        - Observações (deixado vazio, igual ao deles)
-  //   txtDataElaboracao, txtNumero - já usados antes, confirmados de novo
-
-  // ORDEM REESCRITA (achado 2026-09-04, 3º teste real): o Nível de Acesso
-  // agora é o PRIMEIRO campo mexido, não o último. No teste anterior, Tipo,
-  // Data, Número e Formato TINHAM sido preenchidos certinho (confirmado nos
-  // testes de antes), mas a tela voltou a pedir "Informe a Data" - ou seja,
-  // esses campos foram ZERADOS de volta em algum momento DEPOIS de
-  // preenchidos. Suspeita forte: clicar em Nível de Acesso (ou no seu div,
-  // ver abaixo) dispara um recarregamento PARCIAL da tela (a mesma cascata
-  // que popula a Hipótese Legal), que reresetava tudo que já tinha sido
-  // preenchido antes dele. Resolvido invertendo a ordem: mexe no Nível de
-  // Acesso primeiro, espera qualquer recarregamento acontecer e assentar, e
-  // só DEPOIS preenche o resto - assim nada preenchido é jogado fora.
-
-  // Nível de Acesso: o SEI embrulha cada opção num
-  // `<div id="divOptPublico" class="infraDivRadio">` / `divOptRestrito` /
-  // `divOptSigiloso` (confirmado no HTML real) - é ESSE div que tem o clique
-  // de verdade, não o `<input>` por baixo.
-  //
-  // SÓ 1 DISPARO DE EVENTO AQUI (achado 2026-09-04, console real do
-  // navegador): a versão anterior clicava no div E no radio E disparava
-  // change de novo mais adiante na conferência - até 3 disparos seguidos no
-  // MESMO grupo. O console mostrou "Uncaught TypeError: Cannot read
-  // properties of null (reading 'executar')" - o MESMO bug nativo do SEI já
-  // documentado neste arquivo (ver comentário no 9º teste da SOF, dentro de
-  // marcarOpcaoPorRotulo_): disparar cliques/changes repetidos rápido demais
-  // no mesmo campo faz uma segunda execução do handler nativo encontrar um
-  // elemento que a primeira ainda não terminou de montar - e é bem provável
-  // que isso estivesse atropelando a chamada que carrega a Hipótese Legal.
-  // Agora só UM caminho é usado (o primeiro que existir), sem repetir.
-  const nomeOpcaoNivel = { publico: "Publico", restrito: "Restrito", sigiloso: "Sigiloso" }[config.nivelAcesso] || "Publico";
-  const divNivel = document.getElementById("divOpt" + nomeOpcaoNivel);
-  const valorNivelPedido = MAPA_NIVEL_ACESSO[config.nivelAcesso] || "0";
-  const radioNivel = acharEmLote_(`input[name="rdoNivelAcesso"][value="${valorNivelPedido}"]`);
-
-  // NÃO clica se já está no valor certo (achado 2026-09-04, console real: o
-  // crash nativo `alterarNivelAcesso` - "Cannot read properties of null
-  // (reading 'executar')" - continuava aparecendo mesmo com só 1 disparo por
-  // execução, e o arquivo seguia sendo salvo sem anexo depois disso. Suspeita
-  // forte: esse crash deixa algum estado interno do JS da página quebrado, e
-  // isso contamina o upload do arquivo logo em seguida. O padrão já
-  // documentado neste arquivo pra esse MESMO erro, no fluxo da SOF - dentro
-  // de marcarOpcaoPorRotulo_ - é exatamente este: "se já está marcado, não
-  // mexe, não dispara de novo". Faltava aplicar essa mesma proteção aqui.
-  // ACHADO 2026-09-04 (console real - mesmo erro nativo persistindo): o
-  // "pular se já certo" não bastou porque o caminho que DE FATO clica ainda
-  // tinha 3 disparos (`checked=true` + `.click()` + `dispararChange_()`) -
-  // EXATAMENTE o padrão que já provamos, na SOF, que quebra o SEI
-  // (`alterarNivelAcesso`). O clique no div (`clicarComoUsuario_`) já
-  // dispara toda a sequência de mouse que um clique de verdade dispara -
-  // isso sozinho já é "um clique". A parte redundante era mexer no radio
-  // TAMBÉM, por cima, com checked+click+change manuais. Removido - agora
-  // é só o clique no div OU, na ausência dele, um único `.click()` puro no
-  // radio (o padrão comprovado da SOF, sem checked/dispararChange_ extra).
-  const jaEstaCerto = radioNivel && radioNivel.checked;
-  if (jaEstaCerto) {
-    // nada a fazer - já é o valor pedido, não repete o clique.
-  } else if (divNivel) {
-    clicarComoUsuario_(divNivel);
-  } else if (radioNivel) {
-    radioNivel.click();
-  } else {
-    const rotuloNivel = { publico: "Público", restrito: "Restrito", sigiloso: "Sigiloso" }[config.nivelAcesso] || "Público";
-    await marcarRadioReforcadoLote_(rotuloNivel);
-  }
-  // Espera um recarregamento parcial (se houver) assentar - só se algo foi
-  // de fato clicado; se já estava certo, não há nada pra esperar assentar.
-  // Reduzida de 1200ms pra 700ms (achado 2026-09-04: pedido de velocidade
-  // depois do 1º lote 100% bem-sucedido - ainda generosa, mas menos que a
-  // versão "com folga extra" que só serviu pra confirmar que a ORDEM dos
-  // campos era o problema real, não necessariamente o tempo exato de espera).
-  if (!jaEstaCerto) await esperar_(350);
-
-  // CONFERE o que ficou de fato marcado - só LÊ o estado atual, NÃO clica de
-  // novo (ver comentário acima sobre disparo duplicado). O valor pedido pode
-  // não "pegar" nesta tela (já visto antes); o código aceita o que ficou
-  // marcado de verdade e trabalha com ele daqui pra frente, inclusive
-  // escrevendo o hidden espelhado (`hdnStaNivelAcessoLocal`, o campo exato
-  // do erro "Nível de acesso local").
-  const radioMarcado = acharEmLote_('input[name="rdoNivelAcesso"]:checked');
-  const valorNivel = radioMarcado ? radioMarcado.value : valorNivelPedido;
-  const nivelLocal = acharEmLote_('[name="hdnStaNivelAcessoLocal"]');
-  if (nivelLocal) nivelLocal.value = valorNivel;
-  t = marcarTempo_(t, "Nível de Acesso");
-
-  // TODOS os campos que podem disparar recarregamento (radio/select
-  // "estruturais") ficam AGRUPADOS AQUI, cada um com sua pausa própria pra
-  // assentar - achado 2026-09-04 (relato do usuário: "tudo anda muito
-  // rápido, não dá tempo do SEI processar antes do próximo passo"). Formato
-  // é OUTRO radio, igual Nível de Acesso, e clicar nele TAMBÉM pode
-  // recarregar parte da tela - antes ele vinha DEPOIS de Data/Número/Nome
-  // serem preenchidos, sem pausa nenhuma depois, e por isso esses campos
-  // podiam ser zerados de novo sem o código perceber. Agora: TODOS os
-  // campos estruturais primeiro (com pausa depois de cada um), e só DEPOIS
-  // os campos de texto "de folha" - bem no fim, o mais perto possível do
-  // anexo, pra sobrar o menor tempo possível pra algo os zerar de novo.
-
-  // Tipo do Documento: direto por id/name (mais confiável que rótulo).
-  const selSerie = acharEmLote_('#selSerie, [name="selSerie"]');
-  if (selSerie) {
-    const alvo = (config.tipoDocumento || "Anexo").trim().toLowerCase();
-    const opcao = Array.from(selSerie.options).find(o => (o.textContent || "").toLowerCase().indexOf(alvo) !== -1);
-    if (opcao && selSerie.value !== opcao.value) {
-      selSerie.value = opcao.value;
-      dispararChange_(selSerie);
-      await esperar_(300);
-    }
-  } else {
-    selecionarEmSelectPorRotuloLote_("Tipo do Documento", config.tipoDocumento || "Anexo");
-    await esperar_(300);
-  }
-  t = marcarTempo_(t, "Tipo do Documento");
-
-  // Formato: "N" = Nato-digital. Direto por name+value - só clica se ainda
-  // não estiver marcado (mesma proteção do Nível de Acesso: clicar de novo
-  // em cima do valor já certo arrisca o crash nativo do SEI), e com pausa
-  // própria depois - pode disparar cascata igual ao Nível de Acesso.
-  const radioFormato = acharEmLote_('input[name="rdoFormato"][value="N"]') || acharEmLote_('input[name="rdoFormato"]');
-  if (radioFormato && radioFormato.checked) {
-    // já está certo - não mexe, não espera.
-  } else if (radioFormato) {
-    radioFormato.click(); // só isso - mesmo padrão comprovado da SOF, sem checked/dispararChange_ extra
-    await esperar_(350);
-  } else {
-    await marcarRadioReforcadoLote_("Nato-digital") || await marcarRadioReforcadoLote_("Digitalizado nesta unidade");
-    await esperar_(350);
-  }
-  t = marcarTempo_(t, "Formato");
-
-  // A PARTIR DAQUI: campos "de folha" (texto), preenchidos por ÚLTIMO, o mais
-  // perto possível do anexo - depois de todos os campos estruturais já
-  // terem assentado, sobra o mínimo de tempo possível pra algo zerá-los.
-  const dataCampo = campoPorRotuloOuNomeLote_(["Data do Documento", "Data de Elaboração", "Data"], "txtDataElaboracao");
-  if (dataCampo) { dataCampo.value = dataHojeSei_(); dispararChange_(dataCampo); }
-
-  const numeroCampo = campoPorRotuloOuNomeLote_(["Número"], "txtNumero");
-  if (numeroCampo) { numeroCampo.value = gerarNumeroDocumento_(); dispararChange_(numeroCampo); }
-
-  const nomeArvore = campoPorRotuloOuNomeLote_(["Nome na Árvore"], "txtNomeArvore");
-  if (nomeArvore) { nomeArvore.value = nomeSemExtensao_(arquivo.name); dispararChange_(nomeArvore); }
-
-  const observacoes = acharEmLote_('#txaObservacoes, [name="txaObservacoes"]');
-  if (observacoes && !observacoes.value) { observacoes.value = ""; dispararChange_(observacoes); }
-  t = marcarTempo_(t, "campos de texto (Data/Número/Nome/Observações)");
-
-  // NÃO mexe em hdnFlagDocumentoCadastro - o próprio SEI já entrega esse
-  // campo preenchido por padrão nesta tela.
-
-  // `filArquivo` é o name real do campo de arquivo no SEI (confirmado no
-  // código da extensão SEI Pro) - tentado antes do rótulo/busca genérica.
-  let inputArquivo = campoPorRotuloOuNomeLote_(["Arquivo"], "filArquivo", "input");
-  if (!inputArquivo || inputArquivo.type !== "file") {
-    inputArquivo = acharTodosLote_('input[type="file"]').find(i => i.offsetParent !== null) || inputArquivo;
-  }
-  if (!inputArquivo || inputArquivo.type !== "file") {
-    return { ok: false, nome: arquivo.name, erro: "Não encontrei o campo de anexar arquivo." };
-  }
-  if (!anexarArquivoAoInput_(inputArquivo, arquivo)) {
-    return { ok: false, nome: arquivo.name, erro: "Não consegui anexar o arquivo ao campo do SEI." };
-  }
-  t = marcarTempo_(t, "achar campo + anexar arquivo (sem contar a espera depois)");
-
-  // Espera o arquivo terminar de subir antes de seguir pro Salvar (achado
-  // 2026-09-04, teste real: documento salvo com sucesso mas "não contém
-  // anexo" - o SEI sobe o arquivo de forma assíncrona nos bastidores antes de
-  // aceitar o Salvar). A 1ª tentativa tentava DETECTAR isso (esperando o nome
-  // do arquivo aparecer em algum lugar da tela) mas não achou nada - ou o
-  // upload não deixa rastro visível em texto em lugar nenhum do cadastro, ou
-  // o rastro usa um formato que não bate com o nome bruto do arquivo. Trocado
-  // por uma pausa fixa simples (pedido do usuário). Aumentada de 1,5s pra 3s
-  // (achado 2026-09-04, relato do usuário: o fluxo inteiro andava rápido
-  // demais de um jeito geral, não só nesse ponto - "não dava tempo do SEI
-  // carregar o documento anexado, e já entrava pra anexar outro ou salvar").
-  // Reduzida de 3s pra 1,8s, depois pra 1s (achado 2026-09-04: pedido de
-  // velocidade - 5 arquivos levando 48s vs. 24s de outra extensão) - ainda
-  // dá uma folga real pro upload de um PDF pequeno, só não tão generosa.
-  await esperar_(1000);
-  t = marcarTempo_(t, "espera fixa pós-anexo (1s)");
-
-  // Hipótese Legal MOVIDA pra cá, DEPOIS de anexar o arquivo (achado
-  // 2026-09-04, 5º teste real: o HTML confirmou o select certo, já cheio de
-  // opções, "Controle Interno" com value="1" - mesmo assim continuava vazio
-  // na hora de salvar). Suspeita: nem Nível de Acesso nem Formato são os
-  // únicos passos que recarregam parte do formulário - anexar o arquivo
-  // (que aciona o widget nativo `infraUpload` do SEI) pode fazer o mesmo,
-  // zerando uma seleção feita ANTES dele. Por isso a seleção de verdade
-  // agora acontece só aqui, o mais tarde possível, depois de TODOS os passos
-  // que podem disparar esse tipo de atualização - técnica simples da SOF
-  // (`selecionarOpcaoPorTexto_`), com log pra confirmar o resultado.
-  const achouHipotese = await aguardarCondicao_(() => selecionarOpcaoPorTextoLote_("Controle Interno"), 6000, 300);
-  console.log("[GAOCG lote] Hipótese Legal 'Controle Interno' selecionada:", achouHipotese);
-  t = marcarTempo_(t, "Hipótese Legal");
-
-  // Reafirma os 2 hidden espelhados JUSTO ANTES de salvar (mesma lógica -
-  // se ainda houver algum reset de última hora, escrever de novo aqui, o
-  // mais tarde possível antes do clique, é a defesa final).
-  const nivelLocalFinal = acharEmLote_('[name="hdnStaNivelAcessoLocal"]');
-  const radioNivelFinal = acharEmLote_('input[name="rdoNivelAcesso"]:checked');
-  if (nivelLocalFinal && radioNivelFinal) nivelLocalFinal.value = radioNivelFinal.value;
-  const hipoteseSelectFinal = acharTodosLote_("select").find(s => Array.from(s.options).some(o => o.selected && o.textContent.toLowerCase().indexOf("controle interno") !== -1));
-  const hipoteseLocalFinal = acharEmLote_('[name="hdnIdHipoteseLegal"]');
-  if (hipoteseSelectFinal && hipoteseLocalFinal) hipoteseLocalFinal.value = hipoteseSelectFinal.value;
-  console.log("[GAOCG lote] no fim - select achado:", hipoteseSelectFinal && hipoteseSelectFinal.id, "valor:", hipoteseSelectFinal && hipoteseSelectFinal.value);
-
-  const botao = acharTodosLote_('#sbmSalvar, input[value="Salvar"], button[value="Salvar"], input[value="Confirmar Dados"], button[value="Confirmar Dados"]')
-    .find(b => b.offsetParent !== null);
-  if (!botao) return { ok: false, nome: arquivo.name, erro: 'Preenchi o cadastro, mas não achei o botão "Salvar".' };
-  botao.click();
-  t = marcarTempo_(t, "reafirmar hidden + clicar Salvar");
-
-  // Espera sair da tela de cadastro (assume retorno ao próprio processo - ver
-  // aviso no topo desta seção).
-  //
-  // BUG CORRIGIDO (achado 2026-09-04, teste real): antes, não sair a tempo
-  // ainda contava como sucesso ("confirmado: false", mas ok: true) - por
-  // isso o lote "terminava" sem erro nenhum reportado mesmo quando NENHUM
-  // arquivo tinha sido de fato anexado (a tela ficava travada num erro de
-  // validação nativo do SEI, tipo o banner vermelho "Nível de acesso local
-  // não informado", e o clique em Salvar simplesmente não saía dali). Agora
-  // isso é tratado como falha de verdade, com uma mensagem que ajuda a saber
-  // que ficou uma validação pendente na tela.
-  const saiu = await aguardarCondicao_(() => !campoPorRotuloLote_("Nome na Árvore") && !acharEmLote_("#frmDocumentoCadastro"), 15000, 300);
-  t = marcarTempo_(t, "espera confirmação do Salvar (voltar pro processo)");
-  console.log("[GAOCG tempo] TOTAL " + arquivo.name + ": " + (Date.now() - tInicioArquivo) + "ms");
-  if (!saiu) {
-    // Achado 2026-09-04: em vez de pedir print toda vez que um arquivo falha,
-    // captura sozinho o texto do banner de erro que o SEI mostra na tela (ex.
-    // "Nível de acesso local não informado.") - várias classes candidatas
-    // porque a exata não foi confirmada; pega a primeira visível com texto
-    // curto o bastante pra ser mensagem, não o conteúdo da página inteira.
-    const banner = acharTodosLote_('.alert, [class*="erro" i], [class*="Erro"], [class*="aviso" i], [class*="Aviso"], [role="alert"]')
-      .filter(el => el.offsetParent !== null)
-      .map(el => (el.textContent || "").replace(/\s+/g, " ").trim())
-      .find(txt => txt.length > 5 && txt.length < 300);
-    return {
-      ok: false,
-      nome: arquivo.name,
-      erro: banner
-        ? 'SEI recusou: "' + banner + '"'
-        : "Cliquei em Salvar, mas a tela não confirmou - deve ter ficado um aviso de validação pendente (campo obrigatório não preenchido)."
-    };
-  }
-  return { ok: true, nome: arquivo.name };
-}
-
-/** Processa a fila inteira, sequencialmente, atualizando o painel a cada passo. */
-async function processarLote_(arquivos, config, painel) {
-  const tInicioLote = Date.now();
-  const resultados = [];
-  for (let i = 0; i < arquivos.length; i++) {
-    const arquivo = arquivos[i];
-    atualizarProgressoPainel_(painel, i, arquivos.length, arquivo.name);
-    let resultado;
-    try {
-      resultado = await enviarArquivoComoExterno_(arquivo, config);
-    } catch (e) {
-      resultado = { ok: false, nome: arquivo.name, erro: String(e && e.message ? e.message : e) };
-    }
-    resultados.push(resultado);
-    const tAntesRespiro = Date.now();
-    // Respiro entre um arquivo e outro - dá tempo da tela assentar antes de
-    // já clicar em "Incluir Documento" de novo. Aumentado de 400ms pra 2500ms
-    // (achado 2026-09-04, teste real): depois do 1º arquivo salvar com
-    // sucesso, o 2º falhou logo no início ("Não encontrei o tipo Externo") -
-    // sinal de que a tela ainda estava se reajustando (voltando do salvamento
-    // pro processo) quando o próximo arquivo já tentou abrir "Incluir
-    // Documento". 400ms não é tempo suficiente pra essa transição.
-    //
-    // CAUSA REAL identificada pelo usuário (2026-09-04): depois de Salvar, o
-    // PRÓPRIO SEI abre o documento recém-anexado pra mostrar o conteúdo -
-    // isso é o maior gap de tempo de todos, e cortar essa pausa pra 700ms (na
-    // rodada de velocidade) não dava tempo disso acontecer/assentar antes do
-    // próximo arquivo já tentar abrir "Incluir Documento" de novo, quebrando
-    // a seleção do tipo. Voltada pra um valor generoso - essa pausa aqui é
-    // uma das que realmente precisa de tempo de verdade, não é só folga.
-    //
-    // PULA no ÚLTIMO arquivo (achado 2026-09-04, medição real: os logs
-    // mostravam esse respiro rodando até depois do último arquivo do lote,
-    // onde não tem mais nada esperando - 3,5s de desperdício puro).
-    if (i < arquivos.length - 1) {
-      await esperar_(3500);
-      marcarTempo_(tAntesRespiro, "respiro entre arquivos (3,5s fixo)");
-    }
-  }
-  console.log("[GAOCG tempo] === TOTAL DO LOTE (" + arquivos.length + " arquivo(s)): " + (Date.now() - tInicioLote) + "ms ===");
-  finalizarProgressoPainel_(painel, resultados);
-}
-
-/* -------- painel flutuante: HTML/CSS injetados uma única vez -------- */
-
-const ID_PAINEL_LOTE_ = "gaocgPainelLote";
+/* -------- estilos das janelas do GAOCG, injetados uma única vez -------- */
 
 function garantirEstiloPainel_() {
   if (document.getElementById("gaocgEstiloLote")) return;
   const estilo = document.createElement("style");
   estilo.id = "gaocgEstiloLote";
   estilo.textContent = `
-    #${ID_PAINEL_LOTE_} { position:fixed; left:16px; bottom:16px; width:290px; z-index:2147483000;
-      font:13px system-ui,sans-serif; background:#fff; border:1px solid #ccd3da; border-radius:10px;
-      box-shadow:0 6px 20px rgba(0,0,0,.18); overflow:hidden; }
-    #${ID_PAINEL_LOTE_} .gaocg-cab { background:#1c5a8a; color:#fff; padding:8px 10px; display:flex;
-      justify-content:space-between; align-items:center; font-weight:600; }
-    #${ID_PAINEL_LOTE_} .gaocg-cab button { background:transparent; border:none; color:#fff; cursor:pointer;
-      font-size:15px; line-height:1; padding:2px 4px; }
-    #${ID_PAINEL_LOTE_} .gaocg-corpo { padding:10px; }
-    #${ID_PAINEL_LOTE_} .gaocg-linha { display:flex; gap:6px; margin-bottom:8px; align-items:center; }
-    #${ID_PAINEL_LOTE_} .gaocg-linha label { flex:0 0 auto; color:#444; font-size:12px; }
-    #${ID_PAINEL_LOTE_} .gaocg-linha input, #${ID_PAINEL_LOTE_} .gaocg-linha select {
-      flex:1 1 auto; font-size:12px; padding:3px 4px; min-width:0; }
-    #${ID_PAINEL_LOTE_} .gaocg-drop { border:2px dashed #9db3c4; border-radius:8px; padding:16px 8px;
-      text-align:center; color:#5a6b78; font-size:12px; transition:.15s; cursor:default; }
-    #${ID_PAINEL_LOTE_} .gaocg-drop.gaocg-sobre { background:#eaf3fb; border-color:#1c5a8a; color:#1c5a8a; }
-    #${ID_PAINEL_LOTE_} .gaocg-progresso { margin-top:8px; display:flex; align-items:center; gap:8px; }
-    #${ID_PAINEL_LOTE_} .gaocg-spinner { width:16px; height:16px; border:2px solid #d6e0e8;
+    #${ID_ZONA_ANEXO_} { position:fixed; z-index:2147483600; box-sizing:border-box; display:flex; flex-direction:column;
+      align-items:center; justify-content:center; gap:6px; padding:12px; text-align:center;
+      background:rgba(28,90,138,.88); border:3px dashed #fff; border-radius:8px; color:#fff; font:14px system-ui,sans-serif; }
+    #${ID_ZONA_ANEXO_}[hidden] { display:none; }
+    #${ID_ZONA_ANEXO_} > div { pointer-events:none; }
+    #${ID_ZONA_ANEXO_} .gaocg-zona-titulo { font-size:16px; font-weight:600; }
+    #${ID_ZONA_ANEXO_} .gaocg-zona-config { font-size:12px; }
+
+    #${ID_STATUS_ANEXO_} { position:fixed; left:16px; bottom:16px; width:320px; max-width:calc(100vw - 32px); z-index:2147483000;
+      box-sizing:border-box; padding:10px; background:#fff; color:#333; border:1px solid #ccd3da; border-radius:10px;
+      box-shadow:0 6px 20px rgba(0,0,0,.18); font:13px system-ui,sans-serif; }
+    #${ID_STATUS_ANEXO_}[hidden] { display:none; }
+    #${ID_STATUS_ANEXO_} .gaocg-status-linha { display:flex; align-items:center; gap:8px; }
+    #${ID_STATUS_ANEXO_} .gaocg-status-texto { flex:1; min-width:0; font-size:12px; overflow-wrap:anywhere; }
+    #${ID_STATUS_ANEXO_} button { border:none; background:transparent; color:#555; cursor:pointer; font-size:16px; line-height:1; padding:0 2px; }
+    #${ID_STATUS_ANEXO_} .gaocg-spinner { width:16px; height:16px; border:2px solid #d6e0e8;
       border-top-color:#1c5a8a; border-radius:50%; animation:gaocgGirar .8s linear infinite; flex:none; }
+    #${ID_STATUS_ANEXO_}.gaocg-status-fim .gaocg-spinner { display:none; }
     @keyframes gaocgGirar { to { transform:rotate(360deg); } }
-    #${ID_PAINEL_LOTE_} .gaocg-progresso-texto { font-size:12px; color:#333; flex:1; }
-    #${ID_PAINEL_LOTE_} .gaocg-barra { height:6px; border-radius:4px; background:#e3e8ec; margin-top:6px; overflow:hidden; }
-    #${ID_PAINEL_LOTE_} .gaocg-barra-preenc { height:100%; width:0%; background:#1c7a37; transition:width .3s ease; }
-    #${ID_PAINEL_LOTE_}.gaocg-minimizado .gaocg-corpo { display:none; }
+    #${ID_STATUS_ANEXO_} .gaocg-barra { height:6px; border-radius:4px; background:#e3e8ec; margin-top:6px; overflow:hidden; }
+    #${ID_STATUS_ANEXO_} .gaocg-barra-preenc { height:100%; width:0%; background:#1c7a37; transition:width .3s ease; }
+    #${ID_STATUS_ANEXO_} .gaocg-status-erros { margin:8px 0 0; padding:0 0 0 16px; max-height:180px; overflow:auto; font-size:12px; color:#a12a2a; overflow-wrap:anywhere; }
 
     #${ID_CAIXA_ANOTACAO_} { position:fixed; z-index:2147483000; background:#fff; border:1px solid #ccd3da;
       border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,.12); padding:8px 10px; font:13px system-ui,sans-serif; }
@@ -2050,15 +1893,6 @@ function garantirEstiloPainel_() {
     #${ID_CAIXA_ANOTACAO_} .gaocg-anotacoes-acoes button { border:none; background:#1c5a8a; color:#fff; border-radius:6px;
       padding:4px 12px; cursor:pointer; font-size:12px; }
     #${ID_CAIXA_ANOTACAO_} .gaocg-anotacoes-acoes span { font-size:11px; }
-
-    #gaocgOverlayLote { position:fixed; inset:0; background:rgba(244,246,248,.82);
-      backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); z-index:2147482999;
-      display:flex; align-items:center; justify-content:center; }
-    #gaocgOverlayLote .gaocg-overlay-conteudo { display:flex; flex-direction:column; align-items:center;
-      gap:14px; font:14px system-ui,sans-serif; color:#333; max-width:320px; text-align:center;
-      background:#fff; padding:22px 26px; border-radius:12px; box-shadow:0 8px 28px rgba(0,0,0,.15); }
-    #gaocgOverlayLote .gaocg-spinner { border:3px solid #d6e0e8; border-top-color:#1c5a8a; border-radius:50%;
-      animation:gaocgGirar .8s linear infinite; }
   `;
   document.head.appendChild(estilo);
 }
@@ -2355,126 +2189,16 @@ function posicionarCaixaAnotacao_() {
   return caixa;
 }
 
-/** Cria o painel flutuante, uma única vez por página. Sem efeito se já existir. */
-function criarPainelLote_() {
-  if (document.getElementById(ID_PAINEL_LOTE_)) return;
-  garantirEstiloPainel_();
-
-  const painel = document.createElement("div");
-  painel.id = ID_PAINEL_LOTE_;
-  painel.innerHTML = `
-    <div class="gaocg-cab">
-      <span>📎 GAOCG · Envio em lote</span>
-      <button type="button" id="gaocgMinimizar" title="Minimizar">–</button>
-    </div>
-    <div class="gaocg-corpo">
-      <div class="gaocg-linha">
-        <label>Tipo:</label>
-        <input type="text" id="gaocgTipoDoc" value="Anexo">
-      </div>
-      <div class="gaocg-linha">
-        <label>Nível:</label>
-        <select id="gaocgNivelAcesso">
-          <option value="publico">Público</option>
-          <option value="restrito">Restrito</option>
-          <option value="sigiloso">Sigiloso</option>
-        </select>
-      </div>
-      <div class="gaocg-drop" id="gaocgDropZone">Arraste os arquivos aqui para enviar como Documento Externo</div>
-      <div class="gaocg-progresso" id="gaocgProgresso" hidden>
-        <div class="gaocg-spinner"></div>
-        <div class="gaocg-progresso-texto" id="gaocgProgressoTexto"></div>
-      </div>
-      <div class="gaocg-barra"><div class="gaocg-barra-preenc" id="gaocgBarraPreenc"></div></div>
-    </div>
-  `;
-  document.body.appendChild(painel);
-
-  painel.querySelector("#gaocgMinimizar").addEventListener("click", () => {
-    painel.classList.toggle("gaocg-minimizado");
-  });
-
-  // Arrastável pelo cabeçalho (pedido do usuário, 2026-09-04) - a posição
-  // escolhida fica salva entre recarregamentos.
-  tornarArrastavel_(painel, painel.querySelector(".gaocg-cab"), "gaocgPosLote");
-
-  const dropZone = painel.querySelector("#gaocgDropZone");
-  let processando = false;
-  ["dragenter", "dragover"].forEach(evento => {
-    dropZone.addEventListener(evento, e => {
-      e.preventDefault();
-      e.stopPropagation();
-      dropZone.classList.add("gaocg-sobre");
-    });
-  });
-  ["dragleave", "dragend"].forEach(evento => {
-    dropZone.addEventListener(evento, e => {
-      e.preventDefault();
-      dropZone.classList.remove("gaocg-sobre");
-    });
-  });
-  dropZone.addEventListener("drop", e => {
-    e.preventDefault();
-    e.stopPropagation();
-    dropZone.classList.remove("gaocg-sobre");
-    if (processando) {
-      avisarNaTela_("GAOCG: já tem um lote sendo enviado - espere terminar antes de soltar mais arquivos.");
-      return;
-    }
-    if (!ferramentasSeiAtivas_) return; // desligado pelo painel da extensão
-    const arquivos = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
-    if (!arquivos.length) return;
-    const config = {
-      tipoDocumento: (painel.querySelector("#gaocgTipoDoc").value || "Anexo").trim(),
-      nivelAcesso: painel.querySelector("#gaocgNivelAcesso").value || "publico"
-    };
-    processando = true;
-    gaocgLoteEmAndamento_ = true;
-    mostrarOverlayLote_();
-    processarLote_(arquivos, config, painel)
-      .catch(err => avisarNaTela_("GAOCG: erro no envio em lote - " + String(err && err.message ? err.message : err)))
-      .finally(() => { processando = false; gaocgLoteEmAndamento_ = false; esconderOverlayLote_(); aplicarVisibilidadeFerramentas_(); });
-  });
-}
-
-/**
- * "Invisível" (pedido do usuário, 2026-09-04, depois do 1º lote 100%
- * funcional): em vez de mover o fluxo inteiro pra dentro de um iframe
- * escondido (reescreveria toda a base de seletores compartilhada com
- * SOF/NE/Recibo, risco real de quebrar o que já funciona), a automação
- * continua rodando na página de verdade - só que um overlay cobre a tela
- * inteira enquanto isso acontece, então o usuário só vê o painel de
- * progresso do GAOCG por cima, não as telas do SEI passando uma a uma.
- */
-function mostrarOverlayLote_() {
-  if (document.getElementById("gaocgOverlayLote")) return;
-  garantirEstiloPainel_();
-  const overlay = document.createElement("div");
-  overlay.id = "gaocgOverlayLote";
-  overlay.innerHTML = `
-    <div class="gaocg-overlay-conteudo">
-      <div class="gaocg-spinner" style="width:34px;height:34px;border-width:3px;"></div>
-      <div>Enviando arquivos para o SEI… não feche nem recarregue esta aba.</div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-}
-
-function esconderOverlayLote_() {
-  const overlay = document.getElementById("gaocgOverlayLote");
-  if (overlay) overlay.remove();
-}
-
 /* ============ liga/desliga das janelas de anexo e anotação (popup) ============
  *
  * 2026-10-15, pedido do usuário: o painel da extensão (popup.html/popup.js) tem
- * um botão para cada janela - "Envio em lote" (anexação de arquivos) e
+ * um botão para cada função - anexação de arquivos (arrastar para a árvore) e
  * "Anotação do processo" -, deixando, com as duas desligadas, só o envio de
  * SOF (que não depende disto e segue sempre ativo). Ausente no storage =
  * ativo, o comportamento de antes desta opção existir.
- * Desligar só ESCONDE (display:none) em vez de remover: um lote em andamento
- * segue atualizando o próprio painel, e religar não perde o que já estava
- * digitado na anotação.
+ * Desligar a anotação só ESCONDE a caixa, para religar não perder o que já
+ * estava digitado. Desligar os anexos faz a árvore ignorar arquivos arrastados;
+ * um envio já em andamento vai até o fim.
  *
  * Migração: na v0.49.0 a chave de anexos (ferramentasSeiAtivas) desligava as
  * duas janelas. Sem chave própria salva, a anotação herda esse valor - quem
@@ -2488,29 +2212,23 @@ let anotacaoSeiAtiva_ = true;
 function lerPreferenciasFerramentas_(dados) {
   ferramentasSeiAtivas_ = dados[CHAVE_FERRAMENTAS_SEI_] !== false;
   anotacaoSeiAtiva_ = (CHAVE_ANOTACAO_SEI_ in dados) ? dados[CHAVE_ANOTACAO_SEI_] !== false : ferramentasSeiAtivas_;
+  configAnexo_ = {
+    tipoDocumento: String(dados[CHAVE_ANEXO_TIPO_] || "").trim() || "Anexo",
+    nivelAcesso: (dados[CHAVE_ANEXO_NIVEL_] in MAPA_NIVEL_ACESSO) ? dados[CHAVE_ANEXO_NIVEL_] : "publico"
+  };
 }
 
 async function carregarPreferenciaFerramentas_() {
   try {
-    lerPreferenciasFerramentas_(await chrome.storage.local.get([CHAVE_FERRAMENTAS_SEI_, CHAVE_ANOTACAO_SEI_]));
+    lerPreferenciasFerramentas_(await chrome.storage.local.get([CHAVE_FERRAMENTAS_SEI_, CHAVE_ANOTACAO_SEI_, CHAVE_ANEXO_TIPO_, CHAVE_ANEXO_NIVEL_]));
   } catch (e) { ferramentasSeiAtivas_ = true; anotacaoSeiAtiva_ = true; }
   return ferramentasSeiAtivas_;
 }
 
 function aplicarVisibilidadeFerramentas_() {
-  const painel = document.getElementById(ID_PAINEL_LOTE_);
-  // Durante um lote o painel continua visível até terminar (é o único
-  // retorno de progresso pro usuário) - o finally do drop chama de novo.
-  if (painel) painel.style.display = (ferramentasSeiAtivas_ || gaocgLoteEmAndamento_) ? "" : "none";
+  if (!ferramentasSeiAtivas_) esconderZonaAnexo_();
   const caixa = document.getElementById(ID_CAIXA_ANOTACAO_);
   if (caixa) caixa.style.display = anotacaoSeiAtiva_ ? "" : "none";
-
-  // Religado numa página de processo onde o painel ainda não existia
-  // (a aba abriu com a opção desligada): cria agora.
-  if (ferramentasSeiAtivas_ && !painel && location.href.includes("procedimento_trabalhar") &&
-      acharEm_('a[title="Incluir Documento"], img[title="Incluir Documento"]')) {
-    criarPainelLote_();
-  }
 }
 
 /* ===================== inicialização (sempre por último) =====================
@@ -2588,23 +2306,18 @@ if (window.top === window) {
   // o SEI abre depois de "Confirmar Dados" - é ali que o conteúdo finalmente entra.
   iniciarVigilancia_();
 
-  // Painel de envio em lote + caixa de anotação: só fazem sentido na página
-  // de um processo aberto. Espera a árvore/toolbar do processo assentar antes
-  // de desenhar, pra não competir com o carregamento inicial da página.
-  // As duas só aparecem se não tiverem sido desligadas no painel da extensão
-  // (ver aplicarVisibilidadeFerramentas_).
+  // Anexo por arraste + caixa de anotação: só fazem sentido na página de um
+  // processo aberto. A preferência é lida antes do primeiro arraste; desligado
+  // no painel da extensão, o arraste é ignorado (ver aplicarVisibilidadeFerramentas_).
   if (location.href.includes("procedimento_trabalhar")) {
-    const preferencia = carregarPreferenciaFerramentas_();
-    aguardarCondicao_(() => acharEm_('a[title="Incluir Documento"], img[title="Incluir Documento"]'), 15000, 300)
-      .then(() => preferencia)
-      .then(ativas => { if (ativas) criarPainelLote_(); })
-      .catch(() => {});
+    carregarPreferenciaFerramentas_().catch(() => {});
+    iniciarAnexoPorArraste_();
 
     // A caixa de anotação é reposicionada (não só criada) a cada 2s - cobre
     // redimensionamento de janela, zoom, ou a árvore lateral crescendo/
     // encolhendo, sem precisar de um listener específico pra cada caso.
     setInterval(() => {
-      if (gaocgLoteEmAndamento_ || !anotacaoSeiAtiva_) return; // pausado durante o lote - ver comentário em gaocgLoteEmAndamento_
+      if (!anotacaoSeiAtiva_) return;
       try { posicionarCaixaAnotacao_(); } catch (e) {}
     }, 2000);
   }
@@ -2619,7 +2332,7 @@ if (window.top === window) {
       iniciarVigilancia_();
     }
     // Botão do painel da extensão: vale na hora para esta aba.
-    if (area === "local" && (mudancas[CHAVE_FERRAMENTAS_SEI_] || mudancas[CHAVE_ANOTACAO_SEI_])) {
+    if (area === "local" && (mudancas[CHAVE_FERRAMENTAS_SEI_] || mudancas[CHAVE_ANOTACAO_SEI_] || mudancas[CHAVE_ANEXO_TIPO_] || mudancas[CHAVE_ANEXO_NIVEL_])) {
       // Relê as duas juntas: a anotação pode herdar a chave de anexos (migração).
       carregarPreferenciaFerramentas_().then(aplicarVisibilidadeFerramentas_);
     }

@@ -17,6 +17,8 @@
     button.desativar { background: #b33a3a; }
     button.ativar { background: #2f7d4a; }
     button:disabled { opacity: .6; cursor: default; }
+    .campo { display: block; font-size: 12px; color: #555; margin-top: 8px; }
+    .campo input, .campo select { display: block; width: 100%; box-sizing: border-box; font: inherit; color: #222; padding: 4px 6px; margin-top: 2px; }
     .rodape { font-size: 11px; color: #777; margin: 4px 0 0; }
   </style>
 </head>
@@ -32,11 +34,21 @@
 
   <div class="item">
     <p class="item-titulo">Anexação de arquivos no SEI</p>
-    <p>Janela "Envio em lote" (arrastar arquivos) na tela do processo.</p>
+    <p>Arraste os arquivos para a coluna da árvore do processo e solte.</p>
     <div class="linha">
       <span class="status" id="statusFerramentas">…</span>
       <button type="button" id="btnFerramentas" disabled>…</button>
     </div>
+    <label class="campo" for="anexoTipo">Tipo do documento
+      <input type="text" id="anexoTipo" maxlength="80" autocomplete="off">
+    </label>
+    <label class="campo" for="anexoNivel">Nível de acesso
+      <select id="anexoNivel">
+        <option value="publico">Público</option>
+        <option value="restrito">Restrito</option>
+        <option value="sigiloso">Sigiloso</option>
+      </select>
+    </label>
   </div>
 
   <div class="item">
