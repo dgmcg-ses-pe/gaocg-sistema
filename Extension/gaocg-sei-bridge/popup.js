@@ -1,7 +1,7 @@
 /**
  * Painel da extensão (clique no ícone) - 2026-10-15, pedido do usuário: um
  * botão para cada função que o GAOCG acrescenta à tela do processo no SEI -
- * anexação de arquivos e "Anotação do processo" -, deixando, com as duas
+ * anexação de arquivos e cartão de anotação -, deixando, com as duas
  * desligadas, só o envio de SOF. Tipo e nível dos anexos também ficam aqui.
  * As preferências ficam em chrome.storage.local (mesmas chaves lidas pelo
  * content-sei.js), e o content script reage pelo storage.onChanged - abas do

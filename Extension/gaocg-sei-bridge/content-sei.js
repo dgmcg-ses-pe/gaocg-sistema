@@ -1880,313 +1880,458 @@ function garantirEstiloPainel_() {
     #${ID_STATUS_ANEXO_} .gaocg-barra { height:6px; border-radius:4px; background:#e3e8ec; margin-top:6px; overflow:hidden; }
     #${ID_STATUS_ANEXO_} .gaocg-barra-preenc { height:100%; width:0%; background:#1c7a37; transition:width .3s ease; }
     #${ID_STATUS_ANEXO_} .gaocg-status-erros { margin:8px 0 0; padding:0 0 0 16px; max-height:180px; overflow:auto; font-size:12px; color:#a12a2a; overflow-wrap:anywhere; }
-
-    #${ID_CAIXA_ANOTACAO_} { position:fixed; z-index:2147483000; background:#fff; border:1px solid #ccd3da;
-      border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,.12); padding:8px 10px; font:13px system-ui,sans-serif; }
-    #${ID_CAIXA_ANOTACAO_} .gaocg-anotacoes-titulo { display:flex; justify-content:space-between; align-items:center;
-      font-weight:600; color:#444; font-size:12px; margin-bottom:4px; }
-    #${ID_CAIXA_ANOTACAO_} .gaocg-anotacoes-titulo button { border:1px solid #ccd3da; background:#f5f7f9; border-radius:5px;
-      cursor:pointer; font-size:11px; padding:2px 6px; }
-    #${ID_CAIXA_ANOTACAO_} textarea { width:100%; box-sizing:border-box; font:12px system-ui,sans-serif; color:#333;
-      border:1px solid #dde3e8; border-radius:6px; padding:5px 6px; resize:vertical; }
-    #${ID_CAIXA_ANOTACAO_} .gaocg-anotacoes-acoes { display:flex; align-items:center; gap:8px; margin-top:6px; }
-    #${ID_CAIXA_ANOTACAO_} .gaocg-anotacoes-acoes button { border:none; background:#1c5a8a; color:#fff; border-radius:6px;
-      padding:4px 12px; cursor:pointer; font-size:12px; }
-    #${ID_CAIXA_ANOTACAO_} .gaocg-anotacoes-acoes span { font-size:11px; }
   `;
   document.head.appendChild(estilo);
 }
 
-function atualizarProgressoPainel_(painel, indice, total, nomeArquivo) {
-  const bloco = painel.querySelector("#gaocgProgresso");
-  const texto = painel.querySelector("#gaocgProgressoTexto");
-  const barra = painel.querySelector("#gaocgBarraPreenc");
-  if (!bloco || !texto || !barra) return;
-  bloco.hidden = false;
-  texto.textContent = "Enviando " + (indice + 1) + " de " + total + ": " + nomeArquivo;
-  barra.style.width = Math.round((indice / total) * 100) + "%";
-}
-
-function finalizarProgressoPainel_(painel, resultados) {
-  const bloco = painel.querySelector("#gaocgProgresso");
-  const texto = painel.querySelector("#gaocgProgressoTexto");
-  const barra = painel.querySelector("#gaocgBarraPreenc");
-  const spinner = painel.querySelector(".gaocg-spinner");
-  if (spinner) spinner.style.display = "none";
-  if (barra) barra.style.width = "100%";
-  const ok = resultados.filter(r => r.ok).length;
-  const falhas = resultados.filter(r => !r.ok);
-  if (texto) {
-    texto.textContent = ok + " de " + resultados.length + " arquivo(s) enviado(s)." +
-      (falhas.length ? " Falharam: " + falhas.map(f => f.nome + " (" + f.erro + ")").join("; ") : "");
-  }
-  setTimeout(() => { if (bloco) bloco.hidden = true; if (spinner) spinner.style.display = ""; }, falhas.length ? 15000 : 6000);
-}
-
-/**
- * Achado 2026-09-03, revisando o código da extensão SEI Pro mais a fundo:
- * o jeito real que ela lê/grava a anotação NÃO abre nada visível pro usuário.
- * A ação "Anotações" da árvore é um `<a href="...">` de verdade (com um
- * `<img title="Anotações">` dentro) - a URL desse link já é a tela de
- * anotação completa. Em vez de CLICAR nesse link (que navega/abre algo na
- * tela, causando o efeito colateral que o usuário reportou), a extensão
- * carrega essa MESMA url num `<iframe>` escondido (`frmCheckerProcessoPro`),
- * espera carregar, e mexe direto nos campos de dentro dele: `#txaDescricao`
- * (o texto da anotação) e um `button[type="submit"]` (salvar). Tudo invisível
- * - o iframe nunca aparece na tela.
+/* ================ Cartão de anotação na árvore do processo ================
  *
- * Reaproveitado aqui do mesmo jeito: acha o link real (sem clicar), carrega a
- * URL dele num iframe de 1x1px fora da tela, e lê/escreve os campos.
+ * Pedido do usuário (2026-11-04): a anotação aparece sozinha ao abrir o processo,
+ * num cartão dentro da coluna da árvore, logo abaixo de "Consultar Andamento".
+ *
+ * A leitura é a mesma do SEI Pro: o link "Anotações" está no script da árvore
+ * (Nos[0].acoes), vale em qualquer documento aberto à direita, e a página dele
+ * traz #txaDescricao e #chkSinPrioridade. A gravação usa fetch em vez de clicar
+ * numa tela escondida: assim nenhum alerta do SEI trava a aba e dá para conferir
+ * o resultado relendo a página. O SEI Pro não confere; aqui um erro aparece no
+ * cartão em vez de "Salvo". Texto vazio remove a anotação (também como no SEI Pro).
+ *
+ * O cartão fica num Shadow DOM: o CSS do SEI e os temas não mexem nele, e ele não
+ * mexe na árvore. A árvore recarrega com frequência, então o estado mora aqui fora
+ * e o cartão é remontado a cada recarga, sem perder o que estava sendo digitado.
  */
-const ID_IFRAME_ANOTACAO_ = "gaocgIframeAnotacao";
 
-/** Link real (`<a href>`) por trás do ícone "Anotações" da árvore - sem clicar em nada. */
-function linkAnotacao_() {
-  const candidatosTexto = acharTodos_("a").filter(el => {
-    const texto = (el.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
-    return texto === "anotações" || texto === "anotação";
-  });
-  const candidatosImg = acharTodos_('img[title]').filter(el => (el.getAttribute("title") || "").toLowerCase().indexOf("anota") !== -1);
-  const ancora = candidatosTexto[0] || (candidatosImg[0] && candidatosImg[0].closest("a"));
-  return ancora && ancora.getAttribute("href") && ancora.getAttribute("href") !== "#" ? ancora.href : null;
+const ID_CARTAO_ANOTACAO_ = "gaocgCartaoAnotacao";
+const CHAVE_ANOTACAO_MINIMIZADA_ = "gaocgAnotacaoMinimizada";
+
+const estadoAnotacao_ = {
+  chave: null,        // processo a que o estado se refere
+  link: null,
+  raiz: null,         // ShadowRoot do cartão montado
+  carregado: false,   // só depois de ler do SEI o texto pode ser editado e salvo
+  lendo: false,
+  salvando: false,
+  salvarDeNovo: false,
+  conflito: false,
+  textoServidor: "",
+  prioridadeServidor: false,
+  texto: "",
+  prioridade: false,
+  limite: 500,
+  status: null
+};
+
+function normalizarTextoAnotacao_(texto) {
+  return String(texto || "").replace(/\r\n?/g, "\n").replace(/\s+$/, "");
 }
 
-/** Leitura PASSIVA, sem sequer montar o iframe: só serve se o SEI já expõe a anotação inteira no `title` do ícone (tooltip). */
-function leituraPassivaAnotacao_() {
-  const el = acharTodos_('img[title], a[title]').find(el =>
-    (el.getAttribute("title") || "").toLowerCase().indexOf("anota") !== -1 && (el.getAttribute("title") || "").trim().length > 20
-  );
-  return el ? el.getAttribute("title").trim() : null;
+/** Mesma comparação que o SEI vai enxergar: caracteres fora do ISO-8859-1 são trocados ao gravar. */
+function mesmoTextoAnotacao_(a, b) {
+  return codificarValorSei_(normalizarTextoAnotacao_(a), "iso-8859-1") === codificarValorSei_(normalizarTextoAnotacao_(b), "iso-8859-1");
 }
 
-/** Iframe de 1x1px fora da tela, reaproveitado entre chamadas - nunca fica visível pro usuário. */
-function iframeAnotacao_() {
-  let iframe = document.getElementById(ID_IFRAME_ANOTACAO_);
-  if (!iframe) {
-    iframe = document.createElement("iframe");
-    iframe.id = ID_IFRAME_ANOTACAO_;
-    iframe.style.cssText = "position:fixed; left:-9999px; top:-9999px; width:1px; height:1px; opacity:0; pointer-events:none;";
-    document.body.appendChild(iframe);
+function anotacaoAlterada_() {
+  const e = estadoAnotacao_;
+  return e.carregado && (!mesmoTextoAnotacao_(e.texto, e.textoServidor) || e.prioridade !== e.prioridadeServidor);
+}
+
+/** Link da tela de anotação: primeiro no script da árvore, depois nos ícones visíveis. */
+function linkAnotacaoDaArvore_(docArvore) {
+  const absoluto = (href, doc) => new URL(href.replace(/&amp;/g, "&"), doc.baseURI).href;
+  for (const script of Array.from(docArvore.querySelectorAll("script:not([src])"))) {
+    const texto = (script.textContent || "").replace(/\\(["'/])/g, "$1");
+    if (texto.indexOf("acoes") === -1) continue;
+    const direto = /controlador\.php\?acao=anotacao_registrar[^"'\\\s<>]*/.exec(texto);
+    if (direto) return absoluto(direto[0], docArvore);
+    const ancoras = /<a\b[^>]*href="(controlador\.php\?acao=[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+    let achado;
+    while ((achado = ancoras.exec(texto))) {
+      if (/title="Anota/i.test(achado[0])) return absoluto(achado[1], docArvore);
+    }
   }
-  return iframe;
+  for (const doc of documentosDisponiveis_()) {
+    const icone = doc.querySelector('a[href*="acao=anotacao_registrar"], a[title^="Anota"], img[title^="Anota"]');
+    const ancora = icone && (icone.closest("a") || icone);
+    const href = ancora && ancora.getAttribute("href");
+    if (href && /acao=/.test(href)) return absoluto(href, doc);
+  }
+  return null;
 }
 
-/** Carrega `url` no iframe escondido e devolve o `document` de dentro dele (ou null, se não carregar/for cross-origin). */
-function carregarIframeAnotacao_(url) {
-  return new Promise(resolve => {
-    const iframe = iframeAnotacao_();
-    let resolvido = false;
-    const finalizar = () => {
-      if (resolvido) return;
-      resolvido = true;
-      iframe.removeEventListener("load", finalizar);
-      let doc = null;
-      try { doc = iframe.contentDocument; } catch (e) { doc = null; }
-      resolve(doc);
-    };
-    iframe.addEventListener("load", finalizar);
-    setTimeout(finalizar, 8000); // rede de segurança - nunca trava esperando pra sempre
-    iframe.src = url;
-  });
+async function lerAnotacaoDoSei_(link) {
+  const pagina = await pedirSei_(link);
+  const area = pagina.doc.querySelector('#txaDescricao, [name="txaDescricao"]');
+  if (!area) throw new Error("O SEI não abriu a tela de anotação.");
+  const form = area.closest("form") || pagina.doc.querySelector("form");
+  if (!form) throw new Error("O SEI não abriu a tela de anotação.");
+  const caixaPrioridade = form.querySelector('#chkSinPrioridade, [name="chkSinPrioridade"]');
+  return {
+    pagina: pagina,
+    form: form,
+    area: area,
+    caixaPrioridade: caixaPrioridade,
+    texto: normalizarTextoAnotacao_(area.value),
+    prioridade: !!(caixaPrioridade && caixaPrioridade.checked),
+    limite: Number(area.getAttribute("maxlength")) || 500
+  };
 }
 
-/** Lê o texto atual da anotação - carrega o iframe escondido e sai. Ação explícita (botão "Carregar" da caixa). */
-async function carregarAnotacaoDoSei_() {
-  const url = linkAnotacao_();
-  if (!url) return null;
-  const doc = await carregarIframeAnotacao_(url);
-  const area = doc && doc.querySelector("#txaDescricao");
-  return area ? (area.value || "").trim() : null;
+/** Grava e relê: só conta como salvo se o SEI devolver o que foi enviado. */
+async function gravarAnotacaoNoSei_(lida, texto, prioridade, link) {
+  const campos = camposDoFormulario_(lida.form);
+  definirCampo_(campos, lida.area.name || "txaDescricao", normalizarTextoAnotacao_(texto).replace(/\n/g, "\r\n"));
+  if (lida.caixaPrioridade && lida.caixaPrioridade.name) {
+    const nome = lida.caixaPrioridade.name;
+    const restantes = campos.filter(par => par[0] !== nome);
+    campos.length = 0;
+    campos.push(...restantes);
+    if (prioridade) campos.push([nome, lida.caixaPrioridade.getAttribute("value") || "on"]);
+  }
+  // O PHP do SEI reconhece a gravação pelo botão: um envio sem ele só reabre a tela.
+  const botao = lida.form.querySelector('button[type="submit"], input[type="submit"], button:not([type])');
+  if (botao && botao.name) definirCampo_(campos, botao.name, botao.getAttribute("value") || botao.value || "");
+
+  const { pagina, form } = lida;
+  await pedirSei_(new URL(form.getAttribute("action") || pagina.url, pagina.url).href, {
+    method: "POST",
+    headers: cabecalhoFormularioSei_(pagina.charset),
+    body: corpoFormularioSei_(campos, pagina.charset)
+  }, LIMITE_SALVAR_SEI_MS_);
+
+  const conferida = await lerAnotacaoDoSei_(link);
+  if (!mesmoTextoAnotacao_(conferida.texto, texto) || (lida.caixaPrioridade && conferida.prioridade !== !!prioridade)) {
+    throw new Error("O SEI não confirmou a gravação.");
+  }
+  return conferida;
 }
 
-/** Escreve o texto e salva - carrega o iframe escondido, preenche `#txaDescricao` e clica em `button[type=submit]`. */
-async function salvarAnotacaoNoSei_(texto) {
-  const url = linkAnotacao_();
-  if (!url) return { ok: false, erro: 'Não encontrei o link de "Anotações" nesta árvore.' };
-  const doc = await carregarIframeAnotacao_(url);
-  if (!doc) return { ok: false, erro: "A tela de anotação não carregou (ou é de outra origem que o navegador bloqueia)." };
-  const area = doc.querySelector("#txaDescricao");
-  if (!area) return { ok: false, erro: 'Campo de anotação (#txaDescricao) não encontrado - o SEI pode usar outro id aqui.' };
-  area.value = texto;
-  area.dispatchEvent(new Event("input", { bubbles: true }));
-  area.dispatchEvent(new Event("change", { bubbles: true }));
-  const botao = doc.querySelector('button[type="submit"], input[type="submit"]');
-  if (!botao) return { ok: false, erro: "Escrevi o texto, mas não achei o botão de salvar dentro da tela de anotação." };
-  botao.click();
-  await esperar_(800);
-  return { ok: true };
-}
+/* -------- leitura e gravação a partir do cartão -------- */
 
-/** Mostra uma mensagem curta de status na caixa (ex.: "Salvo ✓"), some sozinha depois de um tempo. */
-function statusCaixaAnotacao_(caixa, texto, ehErro) {
-  const alvo = caixa.querySelector("#gaocgAnotacaoStatus");
-  if (!alvo) return;
-  alvo.textContent = texto;
-  alvo.style.color = ehErro ? "#b02a2a" : "#1c7a37";
-  if (texto) setTimeout(() => { if (alvo.textContent === texto) alvo.textContent = ""; }, 5000);
-}
-
-/** Clique em "Carregar" - ação EXPLÍCITA do usuário, só agora é que abre o modal nativo. */
-async function carregarNaCaixa_(caixa) {
-  const area = caixa.querySelector("#gaocgAnotacaoTexto");
-  if (!area) return;
-  statusCaixaAnotacao_(caixa, "Procurando…", false);
-  let texto = null;
+async function carregarCartaoAnotacao_() {
+  const e = estadoAnotacao_;
+  if (e.lendo) return;
+  e.lendo = true;
+  const reabertura = e.carregado;
+  if (!reabertura) mostrarStatusAnotacao_("Carregando…");
+  atualizarCartaoAnotacao_();
   try {
-    texto = await carregarAnotacaoDoSei_();
-  } catch (e) {
-    texto = null;
+    const lida = await lerAnotacaoDoSei_(e.link);
+    // Com texto ainda não salvo, a base de comparação fica como estava: se o SEI
+    // mudou nesse meio-tempo, a gravação avisa em vez de sobrescrever calada.
+    if (!anotacaoAlterada_()) {
+      e.textoServidor = lida.texto;
+      e.prioridadeServidor = lida.prioridade;
+      e.texto = lida.texto;
+      e.prioridade = lida.prioridade;
+    }
+    e.limite = lida.limite;
+    e.carregado = true;
+    mostrarStatusAnotacao_(anotacaoAlterada_() ? "Alterações não salvas" : "");
+  } catch (erro) {
+    console.warn("[GAOCG anotação] não consegui ler:", erro);
+    if (!reabertura) mostrarStatusAnotacao_("Não consegui ler a anotação.", true, true);
+  } finally {
+    e.lendo = false;
+    atualizarCartaoAnotacao_();
   }
-  if (texto === null) {
-    statusCaixaAnotacao_(caixa, 'Não achei o ícone "Anotações" do SEI.', true);
+}
+
+async function salvarCartaoAnotacao_(opcoes) {
+  const e = estadoAnotacao_;
+  const forcar = !!(opcoes && opcoes.forcar);
+  if (!e.carregado) return;
+  if (e.salvando) { e.salvarDeNovo = true; return; }
+  if (!anotacaoAlterada_()) return;
+
+  e.salvando = true;
+  const textoEnviado = e.texto;
+  const prioridadeEnviada = e.prioridade;
+  mostrarStatusAnotacao_("Salvando…");
+  atualizarCartaoAnotacao_();
+  try {
+    const atual = await lerAnotacaoDoSei_(e.link);
+    const mudouNoSei = !mesmoTextoAnotacao_(atual.texto, e.textoServidor) || atual.prioridade !== e.prioridadeServidor;
+    if (mudouNoSei && !forcar && !e.conflito) {
+      e.conflito = true;
+      mostrarStatusAnotacao_("Outra pessoa alterou esta anotação. Salve de novo para substituir o texto dela.", true);
+      return;
+    }
+    const conferida = await gravarAnotacaoNoSei_(atual, textoEnviado, prioridadeEnviada, e.link);
+    e.conflito = false;
+    e.textoServidor = conferida.texto;
+    e.prioridadeServidor = conferida.prioridade;
+    // Só adota o texto do SEI se nada foi digitado enquanto salvava.
+    if (e.texto === textoEnviado && e.prioridade === prioridadeEnviada) {
+      e.texto = conferida.texto;
+      e.prioridade = conferida.prioridade;
+    }
+    const hora = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+    mostrarStatusAnotacao_(conferida.texto ? "Salvo às " + hora : "Anotação removida");
+  } catch (erro) {
+    console.warn("[GAOCG anotação] não consegui salvar:", erro);
+    mostrarStatusAnotacao_("Não salvou: " + String(erro && erro.message ? erro.message : erro), true);
+  } finally {
+    e.salvando = false;
+    atualizarCartaoAnotacao_();
+    if (e.salvarDeNovo) {
+      e.salvarDeNovo = false;
+      salvarCartaoAnotacao_();
+    }
+  }
+}
+
+/* -------- o cartão -------- */
+
+function anotacaoMinimizada_() {
+  try { return localStorage.getItem(CHAVE_ANOTACAO_MINIMIZADA_) === "1"; } catch (e) { return false; }
+}
+
+function guardarAnotacaoMinimizada_(valor) {
+  try { localStorage.setItem(CHAVE_ANOTACAO_MINIMIZADA_, valor ? "1" : "0"); } catch (e) { /* só não lembra */ }
+}
+
+const ICONES_ANOTACAO_ = {
+  nota: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v11l-5 5H4z"/><path d="M15 20v-5h5"/><path d="M8 9h8M8 13h4"/></svg>',
+  seta: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>',
+  lixo: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>',
+  salvar: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-7h8v7"/></svg>'
+};
+
+const ESTILO_CARTAO_ANOTACAO_ = `
+  :host { all: initial; display: block; margin: 12px 8px; max-width: calc(100vw - 16px);
+    font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8;
+    stroke-linecap: round; stroke-linejoin: round; display: block; }
+  button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+  button:disabled { cursor: default; opacity: .45; }
+  button:focus-visible, textarea:focus-visible { outline: 2px solid #8a6500; outline-offset: 1px; }
+
+  .cartao { background: #fff6c9; color: #43360a; border: 1px solid #ecd67c; border-radius: 10px;
+    box-shadow: 0 1px 2px rgba(80,60,0,.14), 0 4px 12px rgba(80,60,0,.10); overflow: hidden;
+    transition: background-color .15s, border-color .15s; }
+  .cartao.prioridade { background: #ffe9e2; border-color: #e0654a; color: #4c1d11; }
+
+  .cabecalho { display: flex; align-items: center; gap: 6px; padding: 7px 8px 7px 10px;
+    background: rgba(140,105,0,.09); }
+  .prioridade .cabecalho { background: rgba(200,60,30,.11); }
+  .titulo { flex: 1; min-width: 0; font-weight: 600; font-size: 12.5px; letter-spacing: .01em; }
+  .selo { display: none; font-size: 10.5px; font-weight: 700; color: #fff; background: #c8401f;
+    border-radius: 999px; padding: 1px 7px; }
+  .prioridade .selo { display: inline-block; }
+  .icone { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 6px; flex: none; }
+  .icone:hover:not(:disabled) { background: rgba(90,70,0,.13); }
+  .minimizado .seta svg { transform: rotate(180deg); }
+
+  textarea { display: block; width: 100%; min-height: 72px; max-height: 320px; padding: 9px 11px 6px; border: 0;
+    resize: none; background: transparent; color: inherit; font-family: inherit; font-size: 14.5px; line-height: 1.45; }
+  textarea::placeholder { color: rgba(70,55,10,.55); }
+  textarea:read-only { opacity: .6; }
+
+  .rodape { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 3px 8px 7px; }
+  .interruptor { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 4px; border-radius: 6px; }
+  .trilho { width: 26px; height: 15px; border-radius: 999px; background: rgba(90,70,0,.3); position: relative; flex: none;
+    transition: background-color .15s; }
+  .trilho::after { content: ""; position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%;
+    background: #fff; transition: transform .15s; }
+  [aria-checked="true"] .trilho { background: #c8401f; }
+  [aria-checked="true"] .trilho::after { transform: translateX(11px); }
+  .espaco { flex: 1; }
+  .contador { font-size: 11px; opacity: .65; font-variant-numeric: tabular-nums; }
+
+  .status { padding: 0 11px 8px; font-size: 11.5px; overflow-wrap: anywhere; }
+  .status.erro { color: #a3220a; font-weight: 600; }
+  .status button { text-decoration: underline; margin-left: 4px; }
+
+  .confirmar { display: flex; align-items: center; gap: 6px; padding: 7px 10px; font-size: 12px;
+    border-top: 1px solid rgba(90,70,0,.2); }
+  .confirmar span { flex: 1; }
+  .confirmar button { padding: 3px 9px; border-radius: 6px; font-weight: 600; }
+  .confirmar .sim { background: #c8401f; color: #fff; }
+  .confirmar .nao { background: rgba(90,70,0,.13); }
+
+  .minimizado .corpo { display: none; }
+`;
+
+function mostrarStatusAnotacao_(texto, ehErro, comRepetir) {
+  const e = estadoAnotacao_;
+  e.status = { texto: texto, ehErro: !!ehErro, comRepetir: !!comRepetir };
+  pintarStatusAnotacao_();
+}
+
+function pintarStatusAnotacao_() {
+  const raiz = estadoAnotacao_.raiz;
+  const status = estadoAnotacao_.status;
+  const alvo = raiz && raiz.querySelector(".status");
+  if (!alvo) return;
+  alvo.textContent = status ? status.texto : "";
+  alvo.classList.toggle("erro", !!(status && status.ehErro));
+  alvo.hidden = !(status && status.texto);
+  if (status && status.comRepetir) {
+    const repetir = document.createElement("button");
+    repetir.type = "button";
+    repetir.textContent = "Tentar de novo";
+    repetir.addEventListener("click", carregarCartaoAnotacao_);
+    alvo.appendChild(repetir);
+  }
+}
+
+function ajustarAlturaAnotacao_(area) {
+  area.style.height = "auto";
+  if (area.scrollHeight) area.style.height = Math.min(area.scrollHeight + 2, 320) + "px";
+}
+
+/** Reflete o estado no cartão. Não mexe no textarea enquanto ele está sendo editado com o mesmo conteúdo. */
+function atualizarCartaoAnotacao_() {
+  const e = estadoAnotacao_;
+  const raiz = e.raiz;
+  if (!raiz) return;
+  const area = raiz.querySelector("textarea");
+  if (area.value !== e.texto) area.value = e.texto;
+  area.readOnly = !e.carregado;
+  area.maxLength = e.limite || 500;
+  raiz.querySelector(".cartao").classList.toggle("prioridade", e.prioridade);
+  const interruptor = raiz.querySelector(".interruptor");
+  interruptor.setAttribute("aria-checked", e.prioridade ? "true" : "false");
+  interruptor.disabled = !e.carregado;
+  raiz.querySelector(".salvar").disabled = !e.carregado || e.salvando || !anotacaoAlterada_();
+  raiz.querySelector(".lixo").disabled = !e.carregado || e.salvando || !e.textoServidor;
+  raiz.querySelector(".contador").textContent = area.value.length + "/" + (e.limite || 500);
+  ajustarAlturaAnotacao_(area);
+  pintarStatusAnotacao_();
+}
+
+function montarCartaoAnotacao_(doc, link) {
+  const e = estadoAnotacao_;
+  const idProcesso = /[?&]id_(?:protocolo|procedimento)=(\d+)/.exec(link);
+  const chave = idProcesso ? idProcesso[1] : link;
+  if (e.chave !== chave) {
+    Object.assign(e, {
+      chave: chave, carregado: false, conflito: false, textoServidor: "", prioridadeServidor: false,
+      texto: "", prioridade: false, status: null
+    });
+  }
+  e.link = link;
+
+  const hospedeiro = doc.createElement("div");
+  hospedeiro.id = ID_CARTAO_ANOTACAO_;
+  const raiz = hospedeiro.attachShadow({ mode: "open" });
+  raiz.innerHTML = `
+    <style>${ESTILO_CARTAO_ANOTACAO_}</style>
+    <section class="cartao" aria-label="Anotação do processo">
+      <header class="cabecalho">
+        ${ICONES_ANOTACAO_.nota}
+        <span class="titulo">Anotação</span>
+        <span class="selo">Prioridade</span>
+        <button type="button" class="icone seta" title="Minimizar" aria-label="Minimizar">${ICONES_ANOTACAO_.seta}</button>
+      </header>
+      <div class="corpo">
+        <textarea rows="3" placeholder="Escreva uma anotação para este processo…" aria-label="Texto da anotação" readonly></textarea>
+        <div class="rodape">
+          <button type="button" class="icone lixo" title="Remover anotação" aria-label="Remover anotação">${ICONES_ANOTACAO_.lixo}</button>
+          <button type="button" class="interruptor" role="switch" aria-checked="false"><span class="trilho"></span>Prioridade</button>
+          <span class="espaco"></span>
+          <span class="contador"></span>
+          <button type="button" class="icone salvar" title="Salvar" aria-label="Salvar">${ICONES_ANOTACAO_.salvar}</button>
+        </div>
+        <div class="status" role="status" hidden></div>
+        <div class="confirmar" hidden>
+          <span>Remover esta anotação?</span>
+          <button type="button" class="nao">Não</button>
+          <button type="button" class="sim">Remover</button>
+        </div>
+      </div>
+    </section>
+  `;
+
+  const cartao = raiz.querySelector(".cartao");
+  const area = raiz.querySelector("textarea");
+  const confirmar = raiz.querySelector(".confirmar");
+  const botaoSeta = raiz.querySelector(".seta");
+
+  const aplicarMinimizado = minimizado => {
+    cartao.classList.toggle("minimizado", minimizado);
+    const rotulo = minimizado ? "Expandir" : "Minimizar";
+    botaoSeta.title = rotulo;
+    botaoSeta.setAttribute("aria-label", rotulo);
+    if (!minimizado) ajustarAlturaAnotacao_(area);
+  };
+  aplicarMinimizado(anotacaoMinimizada_());
+
+  botaoSeta.addEventListener("click", () => {
+    const minimizado = !cartao.classList.contains("minimizado");
+    aplicarMinimizado(minimizado);
+    guardarAnotacaoMinimizada_(minimizado);
+    if (minimizado) salvarCartaoAnotacao_();
+  });
+
+  area.addEventListener("input", () => {
+    e.texto = area.value;
+    e.conflito = false;
+    if (anotacaoAlterada_()) mostrarStatusAnotacao_("Alterações não salvas");
+    else mostrarStatusAnotacao_("");
+    atualizarCartaoAnotacao_();
+  });
+  // Ao sair do campo, salva sozinho - menos se o foco foi para um botão do próprio
+  // cartão, que decide o que fazer (ex.: remover não deve salvar antes).
+  area.addEventListener("focusout", ev => {
+    if (ev.relatedTarget && raiz.contains(ev.relatedTarget)) return;
+    if (!e.conflito) salvarCartaoAnotacao_();
+  });
+  area.addEventListener("keydown", ev => {
+    if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "s") {
+      ev.preventDefault();
+      salvarCartaoAnotacao_({ forcar: e.conflito });
+    }
+  });
+
+  raiz.querySelector(".salvar").addEventListener("click", () => salvarCartaoAnotacao_({ forcar: e.conflito }));
+  raiz.querySelector(".interruptor").addEventListener("click", () => {
+    e.prioridade = !e.prioridade;
+    atualizarCartaoAnotacao_();
+    salvarCartaoAnotacao_();
+  });
+  raiz.querySelector(".lixo").addEventListener("click", () => { confirmar.hidden = false; });
+  raiz.querySelector(".nao").addEventListener("click", () => { confirmar.hidden = true; });
+  raiz.querySelector(".sim").addEventListener("click", () => {
+    confirmar.hidden = true;
+    e.texto = "";
+    e.prioridade = false;
+    atualizarCartaoAnotacao_();
+    salvarCartaoAnotacao_({ forcar: true });
+  });
+
+  // Logo abaixo de "Consultar Andamento"; sem esse bloco, no fim da árvore.
+  let referencia = doc.querySelector("#divConsultarAndamento");
+  if (!referencia) {
+    const ancora = Array.from(doc.querySelectorAll("a")).find(a => (a.textContent || "").trim().toLowerCase() === "consultar andamento");
+    referencia = ancora && (ancora.closest("div") || ancora);
+  }
+  if (referencia && referencia.parentNode) referencia.parentNode.insertBefore(hospedeiro, referencia.nextSibling);
+  else doc.body.appendChild(hospedeiro);
+
+  e.raiz = raiz;
+  atualizarCartaoAnotacao_();
+  carregarCartaoAnotacao_();
+}
+
+/** Roda a cada segundo: monta o cartão quando a árvore (re)carrega e obedece ao botão do popup. */
+function garantirCartaoAnotacao_() {
+  const area = acharAreaArvore_();
+  let doc = null;
+  try { doc = area && (area.contentDocument || area.ownerDocument); } catch (e) { doc = null; }
+  if (!doc || !doc.body || doc.readyState === "loading") return;
+
+  const existente = doc.getElementById(ID_CARTAO_ANOTACAO_);
+  if (existente) {
+    existente.style.display = anotacaoSeiAtiva_ ? "" : "none";
     return;
   }
-  area.value = texto;
-  statusCaixaAnotacao_(caixa, texto ? "Carregado." : "Sem anotação ainda.", false);
-}
-
-/** Clique em "Salvar" - ação EXPLÍCITA do usuário, escreve no modal nativo e salva. */
-async function salvarDaCaixa_(caixa) {
-  const area = caixa.querySelector("#gaocgAnotacaoTexto");
-  if (!area) return;
-  statusCaixaAnotacao_(caixa, "Salvando…", false);
-  let resultado;
-  try {
-    resultado = await salvarAnotacaoNoSei_(area.value);
-  } catch (e) {
-    resultado = { ok: false, erro: String(e && e.message ? e.message : e) };
-  }
-  statusCaixaAnotacao_(caixa, resultado.ok ? "Salvo ✓" : resultado.erro, !resultado.ok);
-}
-
-const ID_CAIXA_ANOTACAO_ = "gaocgCaixaAnotacao";
-
-/**
- * Referência de posição pra caixa de anotação: o link "Consultar Andamento",
- * que fica na coluna esquerda (árvore do processo), logo ACIMA do espaço em
- * branco que o usuário indicou (captura de tela, 2026-09-03) - não existe id
- * fixo conhecido pra esse espaço em si, então a caixa é posicionada por
- * coordenada (position:fixed), logo abaixo desse link, com a MESMA largura da
- * coluna - em vez de tentar injetar dentro da árvore do SEI (arriscado,
- * poderia quebrar o layout/JS nativo dela).
- */
-/**
- * Deixa `elemento` arrastável pelo `cabecalho` (mousedown nele inicia o
- * arrasto), e lembra a posição escolhida entre recarregamentos via
- * localStorage (pedido do usuário, 2026-09-04: as duas janelas do GAOCG -
- * anotação e lote - precisavam poder ser movidas pra outro lugar da tela).
- * Devolve `true` se já havia uma posição salva (e ela foi restaurada) - o
- * chamador usa isso pra saber se deve pular o posicionamento automático
- * padrão.
- */
-function tornarArrastavel_(elemento, cabecalho, chave) {
-  let arrastando = false, offsetX = 0, offsetY = 0;
-  cabecalho.style.cursor = "move";
-  cabecalho.addEventListener("mousedown", e => {
-    if (e.target.closest("button")) return; // não inicia arrasto clicando num botão do cabeçalho
-    arrastando = true;
-    const rect = elemento.getBoundingClientRect();
-    offsetX = e.clientX - rect.left;
-    offsetY = e.clientY - rect.top;
-    e.preventDefault();
-  });
-  document.addEventListener("mousemove", e => {
-    if (!arrastando) return;
-    const x = Math.max(0, Math.min(window.innerWidth - elemento.offsetWidth, e.clientX - offsetX));
-    const y = Math.max(0, Math.min(window.innerHeight - elemento.offsetHeight, e.clientY - offsetY));
-    elemento.style.left = x + "px";
-    elemento.style.top = y + "px";
-    elemento.style.right = "auto";
-    elemento.style.bottom = "auto";
-  });
-  document.addEventListener("mouseup", () => {
-    if (!arrastando) return;
-    arrastando = false;
-    elemento.dataset.posicaoManual = "1";
-    try {
-      localStorage.setItem(chave, JSON.stringify({ left: elemento.style.left, top: elemento.style.top }));
-    } catch (e) { /* localStorage indisponível - só não persiste, sem quebrar o arrasto */ }
-  });
-
-  try {
-    const salvo = JSON.parse(localStorage.getItem(chave) || "null");
-    if (salvo && salvo.left && salvo.top) {
-      elemento.style.left = salvo.left;
-      elemento.style.top = salvo.top;
-      elemento.style.right = "auto";
-      elemento.style.bottom = "auto";
-      elemento.dataset.posicaoManual = "1";
-      return true;
-    }
-  } catch (e) { /* localStorage indisponível - segue com a posição padrão */ }
-  return false;
-}
-
-function localizarReferenciaAnotacao_() {
-  return acharTodos_("a, span, div").find(el => {
-    if (el.offsetParent === null) return false;
-    const t = (el.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
-    return t === "consultar andamento";
-  }) || null;
-}
-
-/**
- * Cria (uma vez) e reposiciona (sempre que chamada) a caixa de anotação sobre
- * a coluna esquerda do SEI. Devolve null sem fazer nada se a referência de
- * posição não for encontrada (ex.: layout mudou, ou não é uma tela de
- * processo) - a caixa simplesmente não aparece, sem quebrar o resto.
- */
-function posicionarCaixaAnotacao_() {
-  let caixa = document.getElementById(ID_CAIXA_ANOTACAO_);
-  let temPosicaoSalva = false;
-
-  if (!caixa) {
-    garantirEstiloPainel_();
-    caixa = document.createElement("div");
-    caixa.id = ID_CAIXA_ANOTACAO_;
-    caixa.innerHTML = `
-      <div class="gaocg-anotacoes-titulo">
-        <span>📝 Anotação do processo</span>
-        <button type="button" id="gaocgCarregarAnotacao" title="Carregar do SEI">⤓ Carregar</button>
-      </div>
-      <textarea id="gaocgAnotacaoTexto" rows="4" placeholder="Escreva aqui ou clique em Carregar pra trazer a anotação já existente no SEI…"></textarea>
-      <div class="gaocg-anotacoes-acoes">
-        <button type="button" id="gaocgSalvarAnotacao">Salvar</button>
-        <span id="gaocgAnotacaoStatus"></span>
-      </div>
-    `;
-    document.body.appendChild(caixa);
-    caixa.querySelector("#gaocgCarregarAnotacao").addEventListener("click", () => carregarNaCaixa_(caixa));
-    caixa.querySelector("#gaocgSalvarAnotacao").addEventListener("click", () => salvarDaCaixa_(caixa));
-
-    // Leitura PASSIVA no carregamento - NÃO clica em nada nem monta o iframe
-    // escondido (ver comentário acima, seção "Achado 2026-09-03..."). Só
-    // preenche se o SEI já expõe o texto pronto no `title` do ícone; senão
-    // fica em branco até o usuário clicar em "Carregar" de propósito.
-    const passiva = leituraPassivaAnotacao_();
-    if (passiva) caixa.querySelector("#gaocgAnotacaoTexto").value = passiva;
-
-    // Arrastável pelo cabeçalho (pedido do usuário, 2026-09-04) - a posição
-    // escolhida fica salva entre recarregamentos. Se já havia uma salva, o
-    // reposicionamento automático (por coordenada, ver comentário acima)
-    // nunca mais mexe nela - só serve pra achar a posição PADRÃO da 1ª vez.
-    temPosicaoSalva = tornarArrastavel_(caixa, caixa.querySelector(".gaocg-anotacoes-titulo"), "gaocgPosAnotacao");
-  }
-
-  if (caixa.dataset.posicaoManual === "1") return caixa; // usuário já escolheu onde fica - nunca mais reposiciona sozinho
-
-  const ref = localizarReferenciaAnotacao_();
-  if (!ref) return temPosicaoSalva ? caixa : null;
-  const coluna = ref.closest("div") || ref;
-  const rect = coluna.getBoundingClientRect();
-  if (!rect.width || !rect.height) return temPosicaoSalva ? caixa : null;
-
-  // Posição padrão (1ª vez, sem nada salvo) um pouco mais embaixo do que
-  // antes (pedido do usuário) - mais respiro abaixo de "Consultar Andamento".
-  caixa.style.left = Math.round(rect.left) + "px";
-  caixa.style.top = Math.round(rect.bottom + 40) + "px";
-  caixa.style.width = Math.round(rect.width) + "px";
-  return caixa;
+  if (!anotacaoSeiAtiva_) return;
+  // Sem o link o processo não está aberto nesta unidade, e o SEI não deixaria anotar.
+  const link = linkAnotacaoDaArvore_(doc);
+  if (link) montarCartaoAnotacao_(doc, link);
 }
 
 /* ============ liga/desliga das janelas de anexo e anotação (popup) ============
@@ -2196,7 +2341,7 @@ function posicionarCaixaAnotacao_() {
  * "Anotação do processo" -, deixando, com as duas desligadas, só o envio de
  * SOF (que não depende disto e segue sempre ativo). Ausente no storage =
  * ativo, o comportamento de antes desta opção existir.
- * Desligar a anotação só ESCONDE a caixa, para religar não perder o que já
+ * Desligar a anotação só ESCONDE o cartão, para religar não perder o que já
  * estava digitado. Desligar os anexos faz a árvore ignorar arquivos arrastados;
  * um envio já em andamento vai até o fim.
  *
@@ -2227,8 +2372,7 @@ async function carregarPreferenciaFerramentas_() {
 
 function aplicarVisibilidadeFerramentas_() {
   if (!ferramentasSeiAtivas_) esconderZonaAnexo_();
-  const caixa = document.getElementById(ID_CAIXA_ANOTACAO_);
-  if (caixa) caixa.style.display = anotacaoSeiAtiva_ ? "" : "none";
+  if (location.href.includes("procedimento_trabalhar")) garantirCartaoAnotacao_();
 }
 
 /* ===================== inicialização (sempre por último) =====================
@@ -2306,20 +2450,17 @@ if (window.top === window) {
   // o SEI abre depois de "Confirmar Dados" - é ali que o conteúdo finalmente entra.
   iniciarVigilancia_();
 
-  // Anexo por arraste + caixa de anotação: só fazem sentido na página de um
+  // Anexo por arraste + cartão de anotação: só fazem sentido na página de um
   // processo aberto. A preferência é lida antes do primeiro arraste; desligado
   // no painel da extensão, o arraste é ignorado (ver aplicarVisibilidadeFerramentas_).
   if (location.href.includes("procedimento_trabalhar")) {
-    carregarPreferenciaFerramentas_().catch(() => {});
+    carregarPreferenciaFerramentas_()
+      .catch(() => {})
+      .then(() => {
+        garantirCartaoAnotacao_();
+        setInterval(garantirCartaoAnotacao_, 1000);
+      });
     iniciarAnexoPorArraste_();
-
-    // A caixa de anotação é reposicionada (não só criada) a cada 2s - cobre
-    // redimensionamento de janela, zoom, ou a árvore lateral crescendo/
-    // encolhendo, sem precisar de um listener específico pra cada caso.
-    setInterval(() => {
-      if (!anotacaoSeiAtiva_) return;
-      try { posicionarCaixaAnotacao_(); } catch (e) {}
-    }, 2000);
   }
 
   // Rede de segurança para o caso em que o editor abre SEM recarregar o
