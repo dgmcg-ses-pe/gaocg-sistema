@@ -1280,7 +1280,7 @@ function avisarNaTela_(texto) {
  * O que os testes reais das versões anteriores provaram e continua valendo:
  *   - nesta instalação "Anexo" é tipo interno: o documento nasce como "Externo"
  *     e "Anexo" entra como a classificação (selSerie) dentro do cadastro;
- *   - "Número" é obrigatório e diferente de "Nome na Árvore" (gerarNumeroDocumento_);
+ *   - "Número" fica vazio (pedido do usuário, 2026-11-05): o nome vai só em "Nome na Árvore";
  *   - hdnStaNivelAcessoLocal e hdnIdHipoteseLegal espelham o radio e o select.
  *
  * O SEI grava em ISO-8859-1: urlSei_ e codificarValorSei_ cuidam disso, senão
@@ -1289,8 +1289,10 @@ function avisarNaTela_(texto) {
 
 const CHAVE_ANEXO_TIPO_ = "anexoTipoDocumento";
 const CHAVE_ANEXO_NIVEL_ = "anexoNivelAcesso";
+const CHAVE_ANEXO_TIPO_PELO_NOME_ = "anexoTipoPeloNome";
 const ID_ZONA_ANEXO_ = "gaocgZonaAnexo";
 const ID_STATUS_ANEXO_ = "gaocgStatusAnexo";
+const LIMITE_DOCUMENTO_BASE_BYTES_ = 35 * 1024 * 1024; // mesmo limite de DocumentosProcesso.gs
 const NOME_NIVEL_ANEXO_ = { publico: "Público", restrito: "Restrito", sigiloso: "Sigiloso" };
 const LIMITE_LEITURA_SEI_MS_ = 60000;
 const LIMITE_UPLOAD_SEI_MS_ = 600000;
@@ -1298,10 +1300,7 @@ const LIMITE_SALVAR_SEI_MS_ = 120000;
 /** Na tela real, "Controle Interno" tem value="1" nesta instalação (HTML confirmado em 2026-09-04); usado só se a página vier sem as opções, que o SEI costuma carregar depois. */
 const HIPOTESE_CONTROLE_INTERNO_PADRAO_ = "1";
 
-let configAnexo_ = { tipoDocumento: "Anexo", nivelAcesso: "publico" };
-
-/** Contador em memória: dois arquivos do mesmo lote nunca geram o mesmo "Número". */
-let contadorLote_ = 0;
+let configAnexo_ = { tipoDocumento: "Anexo", nivelAcesso: "publico", tipoPeloNome: true };
 
 function dataHojeSei_() {
   const d = new Date();
@@ -1313,16 +1312,6 @@ function dataHojeSei_() {
 function nomeSemExtensao_(nomeArquivo) {
   const i = nomeArquivo.lastIndexOf(".");
   return i > 0 ? nomeArquivo.slice(0, i) : nomeArquivo;
-}
-
-/** Identificador para o campo "Número": um arquivo solto não tem número próprio, e o SEI o exige. */
-function gerarNumeroDocumento_() {
-  const d = new Date();
-  const pad = n => String(n).padStart(2, "0");
-  contadorLote_ += 1;
-  return "GAOCG-" + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate())
-    + "-" + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds())
-    + "-" + String(contadorLote_).padStart(3, "0");
 }
 
 /* -------- conversa com o servidor do SEI -------- */
@@ -1522,6 +1511,82 @@ function opcaoDoTipo_(select, tipo) {
   return opcoes.find(o => texto(o) === alvo) || opcoes.find(o => texto(o).indexOf(alvo) !== -1) || null;
 }
 
+/** Palavras comparáveis de um texto: sem acento, minúsculas, com "º" virando "o" ("Nº" = "no"). */
+function palavrasDoTipo_(texto) {
+  return Array.from(String(texto || "").matchAll(/[\p{L}\p{N}º°ª]+/gu)).map(achado => ({
+    palavra: semAcentos_(achado[0]).toLowerCase().replace(/[º°ª]/g, "o"),
+    inicio: achado.index
+  }));
+}
+
+/** Tipo da lista cujas palavras abrem a sequência; entre "Nota" e "Nota Fiscal", vale o mais longo. */
+function tipoNoInicio_(palavras, opcoes) {
+  let melhor = null;
+  for (const opcao of opcoes) {
+    const doTipo = opcao.palavras;
+    if (!doTipo.length || doTipo.length > palavras.length) continue;
+    if (melhor && doTipo.length <= melhor.palavras.length) continue;
+    if (doTipo.every((p, i) => p === palavras[i].palavra)) melhor = opcao;
+  }
+  return melhor;
+}
+
+/**
+ * Deduz o tipo pelo começo do nome do arquivo (pedido do usuário, 2026-11-05).
+ * Só o COMEÇO conta, de propósito: "Relatório da Nota Fiscal" é um relatório. Não
+ * pede nada ao SEI, então não pesa no envio: a lista vem da própria tela do cadastro.
+ * Sem certeza devolve null, e o arquivo fica com o tipo padrão do painel da extensão.
+ */
+function identificarTipoPeloNome_(nome, select) {
+  const opcoes = Array.from(select.options)
+    .filter(o => o.value && o.value !== "null")
+    .map(o => ({ opcao: o, palavras: palavrasDoTipo_(o.textContent).map(p => p.palavra) }));
+  const palavras = palavrasDoTipo_(nome);
+  if (!palavras.length) return null;
+  const porNome = texto => {
+    const alvo = palavrasDoTipo_(texto).map(p => p.palavra).join(" ");
+    const achada = opcoes.find(o => o.palavras.join(" ") === alvo);
+    return achada ? achada.opcao : null;
+  };
+
+  // Padrões dos arquivos da equipe, que não trazem o tipo no nome: o texto fica como está.
+  const emTexto = palavras.map(p => p.palavra).join(" ");
+  const padroes = [
+    [/^(\d{4} ?)?ne ?\d+/, "Nota de Empenho"],
+    [/^no? ?\d+( \d+)*$/, "Nota de Empenho"],
+    [/^(\d{4} ?)?le ?\d+/, "Nota de Liquidação"],
+    [/^liquidacao\b/, "Nota de Liquidação"],
+    [/^\d+o\b/, "Termo Aditivo"], // "14º - AFOGADOS - RATEIO", "17º T.A. UPAE AFOGADOS"
+    [/^\d+ (termo aditivo |ta |t a )?ao contrato\b/, "Termo Aditivo"],
+    [/^(ta|t a) \d/, "Termo Aditivo"],
+    [/^(cg|c g)\b/, "Contrato"], // "C.G. 007.2014 - UPAE AFOGADOS": o SEI só tem o tipo "Contrato"
+    [/^de gestao\b/, "Contrato"]
+  ];
+  for (const [padrao, tipo] of padroes) {
+    const opcao = padrao.test(emTexto) && porNome(tipo);
+    if (opcao) return { opcao: opcao, nomeArvore: nome };
+  }
+
+  // "Nota Fiscal - Outubro": o tipo sai do nome, para a árvore não repeti-lo.
+  const direto = tipoNoInicio_(palavras, opcoes);
+  if (direto) {
+    const seguinte = palavras[direto.palavras.length];
+    let corte = seguinte ? seguinte.inicio : nome.length;
+    if (nome[corte - 1] === "(") corte -= 1;
+    return { opcao: direto.opcao, nomeArvore: nome.slice(corte).trim() };
+  }
+
+  // Exportado do SEI, como "SEI_94733574_GOVPE___Nota_Tecnica_63": o tipo vem depois do número
+  // e, às vezes, da sigla do órgão. O nome fica como está.
+  if (palavras[0].palavra === "sei" && palavras[1] && /^\d+$/.test(palavras[1].palavra)) {
+    for (const pulo of [2, 3]) {
+      const achado = tipoNoInicio_(palavras.slice(pulo), opcoes);
+      if (achado) return { opcao: achado.opcao, nomeArvore: nome };
+    }
+  }
+  return null;
+}
+
 function valorHipoteseLegal_(form, nivelAcesso) {
   if (nivelAcesso === "publico") return "";
   const select = form.querySelector('#selHipoteseLegal, [name="selHipoteseLegal"]');
@@ -1536,7 +1601,10 @@ function valorHipoteseLegal_(form, nivelAcesso) {
 /** Monta o cadastro a partir do que o SEI entregou. A data sai daqui, sem depender do JavaScript da tela. */
 function camposDoCadastroExterno_(form, arquivo, config, anexo, autor) {
   const selSerie = form.querySelector('#selSerie, [name="selSerie"]');
-  const serie = selSerie && opcaoDoTipo_(selSerie, config.tipoDocumento);
+  const nomeArquivo = nomeSemExtensao_(arquivo.name);
+  const fixa = selSerie && config.tipoValor ? Array.from(selSerie.options).find(o => o.value === config.tipoValor) : null;
+  const deduzido = !fixa && selSerie && config.tipoPeloNome ? identificarTipoPeloNome_(nomeArquivo, selSerie) : null;
+  const serie = fixa || (deduzido ? deduzido.opcao : selSerie && opcaoDoTipo_(selSerie, config.tipoDocumento));
   if (!serie) throw new Error('Não encontrei o tipo "' + config.tipoDocumento + '" no cadastro do SEI.');
 
   const nivel = MAPA_NIVEL_ACESSO[config.nivelAcesso] || "0";
@@ -1557,15 +1625,14 @@ function camposDoCadastroExterno_(form, arquivo, config, anexo, autor) {
     hdnIdHipoteseLegal: hipotese,
     hdnFlagDocumentoCadastro: "2",
     txtDataElaboracao: dataHojeSei_(),
-    txtNomeArvore: nomeSemExtensao_(arquivo.name).slice(0, limiteNome),
+    txtNomeArvore: (config.nomeArvore !== undefined ? config.nomeArvore : deduzido ? deduzido.nomeArvore : nomeArquivo).slice(0, limiteNome),
     hdnAnexos: [
       anexo.id, anexo.nome, anexo.dataHora, anexo.tamanho,
       tamanhoFormatado_(anexo.tamanho), autor.usuario, autor.unidade
     ].join("±")
   };
-  if (form.querySelector('#txtNumero, [name="txtNumero"]')) definicoes.txtNumero = gerarNumeroDocumento_();
   for (const nome of Object.keys(definicoes)) definirCampo_(campos, nome, definicoes[nome]);
-  return campos;
+  return { campos: campos, tipo: (serie.textContent || "").replace(/\s+/g, " ").trim() };
 }
 
 function mensagemDeRecusaSei_(doc) {
@@ -1591,7 +1658,7 @@ async function anexarArquivoNoSei_(arquivo, config) {
   if (!urlUpload) throw new Error("Não encontrei o endereço de upload na tela do SEI.");
 
   const anexo = await subirArquivoSei_(arquivo, urlUpload, cadastro);
-  const campos = camposDoCadastroExterno_(form, arquivo, config, anexo, autorDoAnexo_(cadastro.texto));
+  const { campos, tipo } = camposDoCadastroExterno_(form, arquivo, config, anexo, autorDoAnexo_(cadastro.texto));
 
   let salvo;
   try {
@@ -1604,7 +1671,7 @@ async function anexarArquivoNoSei_(arquivo, config) {
     throw new Error("O SEI não confirmou a gravação (" + e.message + "). Confira a árvore antes de enviar de novo.");
   }
 
-  if (/acao=arvore_visualizar/.test(salvo.url) && !salvo.doc.querySelector("#frmDocumentoCadastro")) return;
+  if (/acao=arvore_visualizar/.test(salvo.url) && !salvo.doc.querySelector("#frmDocumentoCadastro")) return { tipo: tipo };
 
   console.warn("[GAOCG anexo] gravação não confirmada:", salvo.url, salvo.texto.slice(0, 500));
   const recusa = mensagemDeRecusaSei_(salvo.doc);
@@ -1621,7 +1688,7 @@ let anexoEmAndamento_ = false;
 
 function enfileirarAnexos_(arquivos) {
   const config = Object.assign({}, configAnexo_);
-  for (const arquivo of arquivos) filaAnexos_.push({ arquivo: arquivo, config: config });
+  for (const arquivo of arquivos) filaAnexos_.push({ arquivo: arquivo, nome: arquivo.name, config: config });
   if (!anexoEmAndamento_) processarFilaAnexos_();
 }
 
@@ -1631,14 +1698,15 @@ async function processarFilaAnexos_() {
   while (filaAnexos_.length) {
     const item = filaAnexos_.shift();
     const atual = resultadosAnexos_.length + 1;
-    mostrarProgressoAnexo_(atual, atual + filaAnexos_.length, item.arquivo.name);
+    mostrarProgressoAnexo_(atual, atual + filaAnexos_.length, item.nome);
     try {
-      await anexarArquivoNoSei_(item.arquivo, item.config);
-      resultadosAnexos_.push({ ok: true, nome: item.arquivo.name });
+      const arquivo = item.arquivo || await item.baixar();
+      const enviado = await anexarArquivoNoSei_(arquivo, item.config);
+      resultadosAnexos_.push({ ok: true, nome: item.nome, tipo: enviado.tipo });
     } catch (e) {
       const erro = String(e && e.message ? e.message : e);
-      console.warn("[GAOCG anexo] falhou:", item.arquivo.name, erro);
-      resultadosAnexos_.push({ ok: false, nome: item.arquivo.name, erro: erro });
+      console.warn("[GAOCG anexo] falhou:", item.nome, erro);
+      resultadosAnexos_.push({ ok: false, nome: item.nome, erro: erro });
     }
   }
   anexoEmAndamento_ = false;
@@ -1672,6 +1740,7 @@ function caixaStatusAnexo_() {
       <button type="button" title="Fechar">×</button>
     </div>
     <div class="gaocg-barra"><div class="gaocg-barra-preenc"></div></div>
+    <ul class="gaocg-status-tipos" hidden></ul>
     <ul class="gaocg-status-erros" hidden></ul>
   `;
   caixa.querySelector("button").addEventListener("click", () => { caixa.hidden = true; });
@@ -1689,6 +1758,7 @@ function mostrarProgressoAnexo_(atual, total, nome) {
   caixa.querySelector(".gaocg-status-texto").textContent = "Anexando " + atual + " de " + total + ": " + nome;
   caixa.querySelector(".gaocg-barra-preenc").style.width = Math.round(((atual - 1) / total) * 100) + "%";
   caixa.querySelector(".gaocg-status-erros").hidden = true;
+  caixa.querySelector(".gaocg-status-tipos").hidden = true;
 }
 
 function mostrarResultadoAnexos_(resultados) {
@@ -1707,8 +1777,19 @@ function mostrarResultadoAnexos_(resultados) {
     lista.appendChild(linha);
   }
   lista.hidden = !falhas.length;
+  const tipos = caixa.querySelector(".gaocg-status-tipos");
+  tipos.textContent = "";
+  for (const certo of resultados.filter(r => r.ok)) {
+    const linha = document.createElement("li");
+    const rotulo = document.createElement("strong");
+    rotulo.textContent = certo.tipo;
+    linha.append(rotulo, ": " + certo.nome);
+    tipos.appendChild(linha);
+  }
+  tipos.hidden = !tipos.childElementCount;
   // Falha fica na tela até o usuário fechar: é o único registro do que não entrou.
-  if (!falhas.length) temporizadorStatusAnexo_ = setTimeout(() => { caixa.hidden = true; }, 6000);
+  // Sem falha, dá tempo de conferir os tipos antes de sumir.
+  if (!falhas.length) temporizadorStatusAnexo_ = setTimeout(() => { caixa.hidden = true; }, 15000);
 }
 
 /* -------- área de soltar sobre a coluna da árvore --------
@@ -1792,7 +1873,8 @@ function mostrarZonaAnexo_() {
   zona.style.width = r.width + "px";
   zona.style.height = r.height + "px";
   zona.querySelector(".gaocg-zona-config").textContent =
-    "Tipo: " + configAnexo_.tipoDocumento + " · Nível: " + (NOME_NIVEL_ANEXO_[configAnexo_.nivelAcesso] || NOME_NIVEL_ANEXO_.publico);
+    (configAnexo_.tipoPeloNome ? "Tipo pelo nome do arquivo (padrão: " + configAnexo_.tipoDocumento + ")" : "Tipo: " + configAnexo_.tipoDocumento) +
+    " · Nível: " + (NOME_NIVEL_ANEXO_[configAnexo_.nivelAcesso] || NOME_NIVEL_ANEXO_.publico);
   zona.hidden = false;
   clearTimeout(temporizadorZonaAnexo_);
   temporizadorZonaAnexo_ = setTimeout(esconderZonaAnexo_, 500);
@@ -1879,6 +1961,7 @@ function garantirEstiloPainel_() {
     @keyframes gaocgGirar { to { transform:rotate(360deg); } }
     #${ID_STATUS_ANEXO_} .gaocg-barra { height:6px; border-radius:4px; background:#e3e8ec; margin-top:6px; overflow:hidden; }
     #${ID_STATUS_ANEXO_} .gaocg-barra-preenc { height:100%; width:0%; background:#1c7a37; transition:width .3s ease; }
+    #${ID_STATUS_ANEXO_} .gaocg-status-tipos { margin:8px 0 0; padding:0 0 0 16px; max-height:180px; overflow:auto; font-size:12px; overflow-wrap:anywhere; }
     #${ID_STATUS_ANEXO_} .gaocg-status-erros { margin:8px 0 0; padding:0 0 0 16px; max-height:180px; overflow:auto; font-size:12px; color:#a12a2a; overflow-wrap:anywhere; }
   `;
   document.head.appendChild(estilo);
@@ -2082,12 +2165,12 @@ async function salvarCartaoAnotacao_(opcoes) {
 
 /* -------- o cartão -------- */
 
-function anotacaoMinimizada_() {
-  try { return localStorage.getItem(CHAVE_ANOTACAO_MINIMIZADA_) === "1"; } catch (e) { return false; }
+function cartaoMinimizado_(chave) {
+  try { return localStorage.getItem(chave) === "1"; } catch (e) { return false; }
 }
 
-function guardarAnotacaoMinimizada_(valor) {
-  try { localStorage.setItem(CHAVE_ANOTACAO_MINIMIZADA_, valor ? "1" : "0"); } catch (e) { /* só não lembra */ }
+function guardarCartaoMinimizado_(chave, valor) {
+  try { localStorage.setItem(chave, valor ? "1" : "0"); } catch (e) { /* só não lembra */ }
 }
 
 const ICONES_ANOTACAO_ = {
@@ -2202,6 +2285,14 @@ function atualizarCartaoAnotacao_() {
   pintarStatusAnotacao_();
 }
 
+/** Os cartões entram logo abaixo de "Consultar Andamento"; sem esse bloco, no fim da árvore. */
+function pontoDosCartoes_(doc) {
+  const bloco = doc.querySelector("#divConsultarAndamento");
+  if (bloco) return bloco;
+  const ancora = Array.from(doc.querySelectorAll("a")).find(a => (a.textContent || "").trim().toLowerCase() === "consultar andamento");
+  return ancora ? (ancora.closest("div") || ancora) : null;
+}
+
 function montarCartaoAnotacao_(doc, link) {
   const e = estadoAnotacao_;
   const idProcesso = /[?&]id_(?:protocolo|procedimento)=(\d+)/.exec(link);
@@ -2257,12 +2348,12 @@ function montarCartaoAnotacao_(doc, link) {
     botaoSeta.setAttribute("aria-label", rotulo);
     if (!minimizado) ajustarAlturaAnotacao_(area);
   };
-  aplicarMinimizado(anotacaoMinimizada_());
+  aplicarMinimizado(cartaoMinimizado_(CHAVE_ANOTACAO_MINIMIZADA_));
 
   botaoSeta.addEventListener("click", () => {
     const minimizado = !cartao.classList.contains("minimizado");
     aplicarMinimizado(minimizado);
-    guardarAnotacaoMinimizada_(minimizado);
+    guardarCartaoMinimizado_(CHAVE_ANOTACAO_MINIMIZADA_, minimizado);
     if (minimizado) salvarCartaoAnotacao_();
   });
 
@@ -2302,12 +2393,7 @@ function montarCartaoAnotacao_(doc, link) {
     salvarCartaoAnotacao_({ forcar: true });
   });
 
-  // Logo abaixo de "Consultar Andamento"; sem esse bloco, no fim da árvore.
-  let referencia = doc.querySelector("#divConsultarAndamento");
-  if (!referencia) {
-    const ancora = Array.from(doc.querySelectorAll("a")).find(a => (a.textContent || "").trim().toLowerCase() === "consultar andamento");
-    referencia = ancora && (ancora.closest("div") || ancora);
-  }
+  const referencia = pontoDosCartoes_(doc);
   if (referencia && referencia.parentNode) referencia.parentNode.insertBefore(hospedeiro, referencia.nextSibling);
   else doc.body.appendChild(hospedeiro);
 
@@ -2334,6 +2420,510 @@ function garantirCartaoAnotacao_() {
   if (link) montarCartaoAnotacao_(doc, link);
 }
 
+/* ================ Cartão de acompanhamento especial na árvore ================
+ *
+ * 1ª etapa do "Anexar documentos do processo" (pedido do usuário, 2026-11-05):
+ * mostrar o acompanhamento e o que dá para identificar nele. Só leitura.
+ *
+ * A árvore traz um link acompanhamento_gerenciar do próprio processo. Confirmado
+ * no SEI real: com acompanhamento, ele abre a "Tabela de Acompanhamentos"; sem
+ * nenhum, redireciona para o formulário "Novo Acompanhamento Especial". Por isso
+ * nada aqui envia formulário: abrir esse link em GET não cadastra nada.
+ *
+ * Cada unidade tem os próprios acompanhamentos e grupos, então o resultado vale
+ * para a unidade ativa. O início do número do processo não serve para identificar
+ * a unidade: o usuário confirmou que uma unidade pode ter mais de um início.
+ */
+
+const ID_CARTAO_ACOMPANHAMENTO_ = "gaocgCartaoAcompanhamento";
+const CHAVE_ACOMPANHAMENTO_MINIMIZADO_ = "gaocgAcompanhamentoMinimizado";
+
+const estadoAcompanhamento_ = { raiz: null, link: null, lendo: false };
+
+function linkAcompanhamentoDaArvore_(docArvore) {
+  for (const script of Array.from(docArvore.querySelectorAll("script:not([src])"))) {
+    const texto = (script.textContent || "").replace(/\\(["'/])/g, "$1");
+    const achado = /controlador\.php\?acao=acompanhamento_gerenciar[^"'\\\s<>]*/.exec(texto);
+    if (achado) return new URL(achado[0].replace(/&amp;/g, "&"), docArvore.baseURI).href;
+  }
+  return null;
+}
+
+function semAcentos_(texto) {
+  return String(texto || "").normalize("NFD").replace(/[̀-ͯ]/g, "");
+}
+
+/** "RECIBO SUS 2026" e "RATEIO - 2026" viram o mesmo objeto todo ano, sem o ano. */
+function objetoDoGrupo_(grupo) {
+  const semAno = String(grupo || "").replace(/\b(19|20)\d{2}\b/g, " ").replace(/\s+/g, " ");
+  return semAno.replace(/^[\s\-–/]+|[\s\-–/]+$/g, "").trim() || String(grupo || "").trim();
+}
+
+/** A observação começa pela unidade: "UPAE GARANHUNS -OUTUBRO/26 - SUS". */
+function unidadeDaObservacao_(observacao) {
+  return String(observacao || "").split(/\s+-\s*|\s*-\s+/)[0].trim();
+}
+
+function fontesNoTexto_(texto) {
+  const normal = semAcentos_(texto).toUpperCase();
+  const fontes = [];
+  if (/\bSUS\b/.test(normal)) fontes.push("SUS");
+  if (/\bTES(OURO)?\b/.test(normal)) fontes.push("Tesouro");
+  if (/\bRATEIO\b/.test(normal)) fontes.push("Rateio");
+  return fontes;
+}
+
+/** O grupo manda; a observação só decide se ele não disser. Duas fontes no mesmo texto contam como não identificada. */
+function fonteDoAcompanhamento_(grupo, observacao) {
+  const doGrupo = fontesNoTexto_(grupo);
+  if (doGrupo.length) return doGrupo.length === 1 ? doGrupo[0] : "";
+  const daObservacao = fontesNoTexto_(observacao);
+  return daObservacao.length === 1 ? daObservacao[0] : "";
+}
+
+async function lerAcompanhamentoDoSei_(link) {
+  const pagina = await pedirSei_(link);
+  const tabelas = Array.from(pagina.doc.querySelectorAll("table"));
+  const tabela = tabelas.find(t => /Acompanhamentos/.test(t.getAttribute("summary") || "")) ||
+    tabelas.find(t => /Grupo/.test(t.textContent) && /Observa/.test(t.textContent));
+  if (!tabela) return []; // sem acompanhamento: o SEI abriu o formulário de cadastro
+
+  const titulos = Array.from(tabela.querySelectorAll("th")).map(th => semAcentos_(th.textContent).trim().toLowerCase());
+  const colunaGrupo = titulos.indexOf("grupo");
+  const colunaObservacao = titulos.indexOf("observacao");
+  const celula = (linha, i) => (i >= 0 && linha.cells[i] ? linha.cells[i].textContent.replace(/\s+/g, " ").trim() : "");
+  return Array.from(tabela.querySelectorAll("tr"))
+    .filter(linha => linha.querySelector("td"))
+    .map(linha => {
+      const grupo = celula(linha, colunaGrupo);
+      const observacao = celula(linha, colunaObservacao);
+      return {
+        grupo: grupo,
+        observacao: observacao,
+        unidade: unidadeDaObservacao_(observacao),
+        objeto: objetoDoGrupo_(grupo),
+        fonte: fonteDoAcompanhamento_(grupo, observacao)
+      };
+    });
+}
+
+const ESTILO_CARTAO_ACOMPANHAMENTO_ = `
+  :host { all: initial; display: block; margin: 12px 8px; max-width: calc(100vw - 16px);
+    font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8;
+    stroke-linecap: round; stroke-linejoin: round; display: block; flex: none; }
+  button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+  button:focus-visible { outline: 2px solid #1c5a8a; outline-offset: 1px; }
+
+  .cartao { background: #eef4fa; color: #1b3247; border: 1px solid #b9d0e4; border-radius: 10px;
+    box-shadow: 0 1px 2px rgba(20,60,90,.14), 0 4px 12px rgba(20,60,90,.10); overflow: hidden; }
+  .cabecalho { display: flex; align-items: center; gap: 6px; padding: 7px 8px 7px 10px; background: rgba(28,90,138,.1); }
+  .titulo { flex: 1; min-width: 0; font-weight: 600; font-size: 12.5px; }
+  .icone { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 6px; flex: none; }
+  .icone:hover { background: rgba(28,90,138,.15); }
+  .minimizado .seta svg { transform: rotate(180deg); }
+  .minimizado .corpo { display: none; }
+
+  .corpo { padding: 9px 11px 10px; }
+  .aviso { font-size: 12.5px; opacity: .8; }
+  .aviso.erro { color: #a3220a; font-weight: 600; opacity: 1; }
+  .aviso button { text-decoration: underline; margin-left: 4px; }
+  .registro + .registro { margin-top: 10px; padding-top: 10px; border-top: 1px solid #c9dbea; }
+  .grupo { font-weight: 600; font-size: 12.5px; overflow-wrap: anywhere; }
+  .observacao { margin-top: 2px; font-size: 13.5px; overflow-wrap: anywhere; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; margin: 8px 0 0; font-size: 12px; }
+  dt { opacity: .7; }
+  dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+  dd.vazio { font-weight: 400; font-style: italic; opacity: .7; }
+
+  select { width: 100%; max-width: 100%; font: inherit; font-size: 12px; color: inherit; background: #fff;
+    border: 1px solid #b9d0e4; border-radius: 6px; padding: 3px 4px; }
+  .anexar { display: block; width: 100%; margin-top: 9px; padding: 6px 8px; border-radius: 7px; background: #1c5a8a;
+    color: #fff; font-weight: 600; font-size: 12.5px; text-align: center; }
+  .anexar:hover:not(:disabled) { background: #174c75; }
+  .anexar:disabled { opacity: .5; cursor: default; }
+  .secundario { padding: 6px 10px; border-radius: 7px; background: rgba(28,90,138,.12); font-size: 12.5px; font-weight: 600; }
+  .conferencia { margin-top: 10px; padding-top: 10px; border-top: 1px solid #c9dbea; }
+  .caminho { font-weight: 600; font-size: 12px; overflow-wrap: anywhere; margin-bottom: 6px; }
+  .arquivos { list-style: none; margin: 0 0 8px; padding: 0; }
+  .arquivos li { padding: 7px 0; border-bottom: 1px solid #d7e4ef; }
+  .arquivos li.sem-tipo { background: #fff4d6; margin: 0 -6px; padding: 7px 6px; border-radius: 6px; }
+  .nome { display: flex; gap: 6px; align-items: flex-start; font-size: 12.5px; overflow-wrap: anywhere; cursor: pointer; margin-bottom: 4px; }
+  .nome input { margin: 2px 0 0; flex: none; }
+  .nome span { min-width: 0; }
+  .detalhe { font-size: 11px; opacity: .72; margin-top: 3px; }
+  .alerta { font-size: 11px; font-weight: 600; color: #8a5a00; margin-top: 3px; }
+  .acoes { display: flex; gap: 6px; align-items: stretch; margin-top: 8px; }
+  .acoes .anexar { flex: 1; width: auto; margin: 0; }
+  .escolha { margin-top: 6px; }
+`;
+
+function pintarCartaoAcompanhamento_(registros, erro) {
+  const raiz = estadoAcompanhamento_.raiz;
+  if (!raiz) return;
+  const corpo = raiz.querySelector(".corpo");
+  corpo.textContent = "";
+
+  const aviso = (texto, ehErro) => {
+    const el = document.createElement("div");
+    el.className = "aviso" + (ehErro ? " erro" : "");
+    el.textContent = texto;
+    corpo.appendChild(el);
+    return el;
+  };
+  if (erro) {
+    const el = aviso("Não consegui ler o acompanhamento.", true);
+    const repetir = document.createElement("button");
+    repetir.type = "button";
+    repetir.textContent = "Tentar de novo";
+    repetir.addEventListener("click", carregarCartaoAcompanhamento_);
+    el.appendChild(repetir);
+    return;
+  }
+  if (!registros) { aviso("Carregando…"); return; }
+  if (!registros.length) { aviso("Sem acompanhamento nesta unidade."); return; }
+
+  for (const registro of registros) {
+    const bloco = document.createElement("div");
+    bloco.className = "registro";
+    const grupo = document.createElement("div");
+    grupo.className = "grupo";
+    grupo.textContent = registro.grupo || "Sem grupo";
+    bloco.appendChild(grupo);
+    if (registro.observacao) {
+      const observacao = document.createElement("div");
+      observacao.className = "observacao";
+      observacao.textContent = registro.observacao;
+      bloco.appendChild(observacao);
+    }
+    const lista = document.createElement("dl");
+    for (const [rotulo, valor] of [["Unidade", registro.unidade], ["Objeto", registro.objeto], ["Fonte", registro.fonte]]) {
+      const termo = document.createElement("dt");
+      termo.textContent = rotulo;
+      const definicao = document.createElement("dd");
+      definicao.textContent = valor || "Não identificada";
+      if (!valor) definicao.className = "vazio";
+      lista.append(termo, definicao);
+    }
+    bloco.appendChild(lista);
+    if (ferramentasSeiAtivas_) {
+      const botao = document.createElement("button");
+      botao.type = "button";
+      botao.className = "anexar";
+      botao.textContent = "Anexar documentos do processo";
+      botao.addEventListener("click", () => abrirConferenciaDocumentos_(registro, {}));
+      bloco.appendChild(botao);
+    }
+    corpo.appendChild(bloco);
+  }
+  const conferencia = document.createElement("div");
+  conferencia.className = "conferencia";
+  conferencia.hidden = true;
+  corpo.appendChild(conferencia);
+}
+
+/* -------- "Anexar documentos do processo": conferência antes de enviar --------
+ *
+ * Os documentos vêm da pasta ANEXOS, pelo backend do app (DocumentosProcesso.gs). O acesso
+ * é o da pessoa logada no app, que fica com o service worker (background.js): esta página
+ * nunca vê o token. Nada é anexado sem o segundo clique, porque um documento de outra
+ * unidade num processo de pagamento é um erro real; tipo e nome já vêm preenchidos.
+ */
+
+function pedirAoAppGaocg_(acao, dados) {
+  return chrome.runtime.sendMessage({ type: "DOCUMENTOS_GAOCG", acao: acao, dados: dados }).then(resposta => {
+    if (!resposta) throw new Error("A extensão não respondeu. Recarregue a página do SEI.");
+    if (!resposta.ok) throw new Error(resposta.erro || "O app GAOCG não respondeu.");
+    return resposta.dados;
+  });
+}
+
+function base64ParaBytes_(base64) {
+  const binario = atob(base64);
+  const bytes = new Uint8Array(binario.length);
+  for (let i = 0; i < binario.length; i++) bytes[i] = binario.charCodeAt(i);
+  return bytes;
+}
+
+async function baixarDocumentoDaBase_(id) {
+  const dados = await pedirAoAppGaocg_("baixarDocumentoProcesso", { id: id });
+  return new File([base64ParaBytes_(dados.base64)], dados.nome, { type: dados.tipo || "application/pdf" });
+}
+
+function dataCurta_(iso) {
+  const d = new Date(iso);
+  return isNaN(d) ? "" : d.toLocaleDateString("pt-BR");
+}
+
+function tamanhoCurto_(bytes) {
+  const n = Number(bytes) || 0;
+  return n < 1048576 ? Math.max(1, Math.round(n / 1024)) + " KB" : (n / 1048576).toFixed(1) + " MB";
+}
+
+/** A árvore já mostra este documento? Serve para não anexar duas vezes no mesmo processo. */
+function documentoJaNaArvore_(tipo, nomeArvore) {
+  const area = acharAreaArvore_();
+  const doc = area && area.contentDocument;
+  if (!doc || !doc.body) return false;
+  const normalizar = t => palavrasDoTipo_(t).map(p => p.palavra).join(" ");
+  // Inclui os scripts da página, que trazem os nós da árvore mesmo com a pasta recolhida.
+  const arvore = normalizar(doc.documentElement.textContent);
+  const procurado = normalizar(nomeArvore ? tipo + " " + nomeArvore : tipo);
+  return !!procurado && arvore.indexOf(procurado) !== -1;
+}
+
+function painelConferencia_() {
+  const raiz = estadoAcompanhamento_.raiz;
+  const painel = raiz && raiz.querySelector(".conferencia");
+  if (!painel) return null;
+  painel.textContent = "";
+  painel.hidden = false;
+  return painel;
+}
+
+function fecharConferencia_() {
+  const raiz = estadoAcompanhamento_.raiz;
+  const painel = raiz && raiz.querySelector(".conferencia");
+  if (painel) { painel.textContent = ""; painel.hidden = true; }
+}
+
+function elementoConferencia_(tag, classe, texto) {
+  const el = document.createElement(tag);
+  if (classe) el.className = classe;
+  if (texto !== undefined) el.textContent = texto;
+  return el;
+}
+
+function botaoCancelarConferencia_() {
+  const botao = elementoConferencia_("button", "secundario", "Cancelar");
+  botao.type = "button";
+  botao.addEventListener("click", fecharConferencia_);
+  return botao;
+}
+
+const PERGUNTA_PASTA_ANEXOS_ = {
+  unidade: ["Não identifiquei a unidade com certeza. Qual é?", "unidadePasta"],
+  objeto: ["Não há pasta certa para este objeto. Qual usar?", "objetoPasta"],
+  divisao: ["Este objeto é dividido. Qual pasta usar?", "divisaoPasta"]
+};
+
+/** Sem certeza, quem decide é o usuário: nunca se escolhe uma pasta por aproximação. */
+function pedirEscolhaDePasta_(painel, registro, escolha, dados) {
+  const [pergunta, campo] = PERGUNTA_PASTA_ANEXOS_[dados.falta];
+  painel.appendChild(elementoConferencia_("div", "aviso", pergunta));
+  if (!dados.opcoes.length) {
+    painel.appendChild(elementoConferencia_("div", "aviso", "Essa pasta ainda não tem subpastas na base de documentos."));
+    painel.appendChild(botaoCancelarConferencia_());
+    return;
+  }
+  const lista = elementoConferencia_("select", "escolha");
+  lista.setAttribute("aria-label", pergunta);
+  for (const nome of dados.opcoes) {
+    const opcao = elementoConferencia_("option", "", nome);
+    opcao.value = nome;
+    lista.appendChild(opcao);
+  }
+  const acoes = elementoConferencia_("div", "acoes");
+  const continuar = elementoConferencia_("button", "anexar", "Continuar");
+  continuar.type = "button";
+  continuar.addEventListener("click", () => {
+    const nova = Object.assign({}, escolha, { [campo]: lista.value });
+    if (dados.unidadePasta) nova.unidadePasta = dados.unidadePasta;
+    if (dados.objetoPasta) nova.objetoPasta = dados.objetoPasta;
+    abrirConferenciaDocumentos_(registro, nova);
+  });
+  acoes.append(botaoCancelarConferencia_(), continuar);
+  painel.append(lista, acoes);
+}
+
+async function abrirConferenciaDocumentos_(registro, escolha) {
+  const painel = painelConferencia_();
+  if (!painel) return;
+  painel.appendChild(elementoConferencia_("div", "aviso", "Procurando os documentos…"));
+  try {
+    const dados = await pedirAoAppGaocg_("listarDocumentosProcesso", {
+      unidade: registro.unidade,
+      grupo: registro.grupo,
+      fonte: registro.fonte,
+      unidadePasta: escolha.unidadePasta,
+      objetoPasta: escolha.objetoPasta,
+      divisaoPasta: escolha.divisaoPasta
+    });
+    painel.textContent = "";
+    if (!dados.encontrado) {
+      pedirEscolhaDePasta_(painel, registro, escolha, dados);
+      return;
+    }
+    if (!dados.arquivos.length) {
+      painel.appendChild(elementoConferencia_("div", "aviso", "A pasta " + dados.caminho + " está vazia."));
+      painel.appendChild(botaoCancelarConferencia_());
+      return;
+    }
+
+    // Os tipos vêm da própria tela do SEI: abrir o cadastro não grava nada.
+    painel.appendChild(elementoConferencia_("div", "aviso", "Conferindo os tipos no SEI…"));
+    const linkTipos = acharLinkIncluirDocumento_();
+    if (!linkTipos) throw new Error('Não encontrei "Incluir Documento" neste processo. Confira se ele está aberto na sua unidade.');
+    const cadastro = await abrirCadastroExterno_(linkTipos);
+    const selSerie = cadastro.doc.querySelector('#selSerie, [name="selSerie"]');
+    if (!selSerie) throw new Error("O cadastro do Documento Externo não abriu.");
+    painel.textContent = "";
+    montarConferencia_(painel, dados, selSerie);
+  } catch (erro) {
+    console.warn("[GAOCG documentos] falhou:", erro);
+    painel.textContent = "";
+    painel.appendChild(elementoConferencia_("div", "aviso erro", String(erro && erro.message ? erro.message : erro)));
+    painel.appendChild(botaoCancelarConferencia_());
+  }
+}
+
+function montarConferencia_(painel, dados, selSerie) {
+  const config = Object.assign({}, configAnexo_);
+  const opcoesTipo = Array.from(selSerie.options).filter(o => o.value && o.value !== "null");
+  const padrao = opcaoDoTipo_(selSerie, config.tipoDocumento);
+
+  painel.appendChild(elementoConferencia_("div", "caminho", dados.caminho));
+  const lista = elementoConferencia_("ul", "arquivos");
+  const linhas = [];
+
+  for (const arquivo of dados.arquivos) {
+    const nomeArquivo = nomeSemExtensao_(arquivo.nome);
+    const deduzido = config.tipoPeloNome ? identificarTipoPeloNome_(nomeArquivo, selSerie) : null;
+    const opcaoInicial = deduzido ? deduzido.opcao : padrao;
+    const nomeArvore = deduzido ? deduzido.nomeArvore : nomeArquivo;
+    const tipoInicial = opcaoInicial ? (opcaoInicial.textContent || "").trim() : "";
+    const repetido = documentoJaNaArvore_(tipoInicial, nomeArvore);
+
+    const item = elementoConferencia_("li", deduzido ? "" : "sem-tipo");
+    const rotulo = elementoConferencia_("label", "nome");
+    const marcar = document.createElement("input");
+    marcar.type = "checkbox";
+    const grandeDemais = Number(arquivo.tamanho) > LIMITE_DOCUMENTO_BASE_BYTES_;
+    marcar.checked = !repetido && !grandeDemais;
+    marcar.disabled = grandeDemais;
+    rotulo.append(marcar, elementoConferencia_("span", "", arquivo.nome));
+    const detalhe = [dataCurta_(arquivo.modificado) && "alterado em " + dataCurta_(arquivo.modificado), tamanhoCurto_(arquivo.tamanho)].filter(Boolean).join(" · ");
+    const seletor = elementoConferencia_("select", "tipo");
+    seletor.setAttribute("aria-label", "Tipo de " + arquivo.nome);
+    for (const opcao of opcoesTipo) {
+      const nova = elementoConferencia_("option", "", (opcao.textContent || "").trim());
+      nova.value = opcao.value;
+      seletor.appendChild(nova);
+    }
+    if (opcaoInicial) seletor.value = opcaoInicial.value;
+    item.append(rotulo, seletor, elementoConferencia_("div", "detalhe", detalhe));
+    if (!deduzido) item.appendChild(elementoConferencia_("div", "alerta", "Tipo não identificado pelo nome: confira."));
+    if (grandeDemais) item.appendChild(elementoConferencia_("div", "alerta", "Tem mais de 35 MB: anexe arrastando para a árvore."));
+    if (repetido) item.appendChild(elementoConferencia_("div", "alerta", "Parece já estar na árvore. Desmarcado."));
+    lista.appendChild(item);
+    linhas.push({ arquivo: arquivo, marcar: marcar, seletor: seletor, nomeArvore: nomeArvore });
+  }
+  painel.appendChild(lista);
+
+  const nivel = NOME_NIVEL_ANEXO_[config.nivelAcesso] || NOME_NIVEL_ANEXO_.publico;
+  painel.appendChild(elementoConferencia_("div", "detalhe", "Nível: " + nivel + " · Data: hoje · Nato-digital"));
+
+  const acoes = elementoConferencia_("div", "acoes");
+  const confirmar = elementoConferencia_("button", "anexar");
+  confirmar.type = "button";
+  const contar = () => {
+    const total = linhas.filter(l => l.marcar.checked).length;
+    confirmar.textContent = "Anexar " + total + " documento(s)";
+    confirmar.disabled = !total;
+  };
+  linhas.forEach(l => l.marcar.addEventListener("change", contar));
+  contar();
+  confirmar.addEventListener("click", () => {
+    const escolhidas = linhas.filter(l => l.marcar.checked);
+    fecharConferencia_();
+    for (const linha of escolhidas) {
+      filaAnexos_.push({
+        nome: linha.arquivo.nome,
+        baixar: () => baixarDocumentoDaBase_(linha.arquivo.id),
+        config: Object.assign({}, config, { tipoValor: linha.seletor.value, nomeArvore: linha.nomeArvore })
+      });
+    }
+    if (!anexoEmAndamento_) processarFilaAnexos_();
+  });
+  acoes.append(botaoCancelarConferencia_(), confirmar);
+  painel.appendChild(acoes);
+}
+
+async function carregarCartaoAcompanhamento_() {
+  const e = estadoAcompanhamento_;
+  if (e.lendo) return;
+  e.lendo = true;
+  pintarCartaoAcompanhamento_(null);
+  try {
+    pintarCartaoAcompanhamento_(await lerAcompanhamentoDoSei_(e.link));
+  } catch (erro) {
+    console.warn("[GAOCG acompanhamento] não consegui ler:", erro);
+    pintarCartaoAcompanhamento_(null, true);
+  } finally {
+    e.lendo = false;
+  }
+}
+
+function montarCartaoAcompanhamento_(doc, link) {
+  const hospedeiro = doc.createElement("div");
+  hospedeiro.id = ID_CARTAO_ACOMPANHAMENTO_;
+  const raiz = hospedeiro.attachShadow({ mode: "open" });
+  raiz.innerHTML = `
+    <style>${ESTILO_CARTAO_ACOMPANHAMENTO_}</style>
+    <section class="cartao" aria-label="Acompanhamento Especial">
+      <header class="cabecalho">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+        <span class="titulo">Acompanhamento Especial</span>
+        <button type="button" class="icone seta" title="Minimizar" aria-label="Minimizar">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>
+        </button>
+      </header>
+      <div class="corpo" role="status"></div>
+    </section>
+  `;
+  const cartao = raiz.querySelector(".cartao");
+  const seta = raiz.querySelector(".seta");
+  const aplicarMinimizado = minimizado => {
+    cartao.classList.toggle("minimizado", minimizado);
+    const rotulo = minimizado ? "Expandir" : "Minimizar";
+    seta.title = rotulo;
+    seta.setAttribute("aria-label", rotulo);
+  };
+  aplicarMinimizado(cartaoMinimizado_(CHAVE_ACOMPANHAMENTO_MINIMIZADO_));
+  seta.addEventListener("click", () => {
+    const minimizado = !cartao.classList.contains("minimizado");
+    aplicarMinimizado(minimizado);
+    guardarCartaoMinimizado_(CHAVE_ACOMPANHAMENTO_MINIMIZADO_, minimizado);
+  });
+
+  // Abaixo do cartão de anotação, quando ele existir.
+  const referencia = doc.getElementById(ID_CARTAO_ANOTACAO_) || pontoDosCartoes_(doc);
+  if (referencia && referencia.parentNode) referencia.parentNode.insertBefore(hospedeiro, referencia.nextSibling);
+  else doc.body.appendChild(hospedeiro);
+
+  estadoAcompanhamento_.raiz = raiz;
+  estadoAcompanhamento_.link = link;
+  carregarCartaoAcompanhamento_();
+}
+
+function garantirCartaoAcompanhamento_() {
+  const area = acharAreaArvore_();
+  let doc = null;
+  try { doc = area && (area.contentDocument || area.ownerDocument); } catch (e) { doc = null; }
+  if (!doc || !doc.body || doc.readyState === "loading") return;
+
+  const existente = doc.getElementById(ID_CARTAO_ACOMPANHAMENTO_);
+  if (existente) {
+    existente.style.display = acompanhamentoSeiAtivo_ ? "" : "none";
+    return;
+  }
+  if (!acompanhamentoSeiAtivo_) return;
+  const link = linkAcompanhamentoDaArvore_(doc);
+  if (link) montarCartaoAcompanhamento_(doc, link);
+}
+
 /* ============ liga/desliga das janelas de anexo e anotação (popup) ============
  *
  * 2026-10-15, pedido do usuário: o painel da extensão (popup.html/popup.js) tem
@@ -2351,28 +2941,37 @@ function garantirCartaoAnotacao_() {
  */
 const CHAVE_FERRAMENTAS_SEI_ = "ferramentasSeiAtivas";
 const CHAVE_ANOTACAO_SEI_ = "anotacaoSeiAtiva";
+const CHAVE_ACOMPANHAMENTO_SEI_ = "acompanhamentoSeiAtivo";
 let ferramentasSeiAtivas_ = true;
 let anotacaoSeiAtiva_ = true;
+let acompanhamentoSeiAtivo_ = true;
 
 function lerPreferenciasFerramentas_(dados) {
   ferramentasSeiAtivas_ = dados[CHAVE_FERRAMENTAS_SEI_] !== false;
   anotacaoSeiAtiva_ = (CHAVE_ANOTACAO_SEI_ in dados) ? dados[CHAVE_ANOTACAO_SEI_] !== false : ferramentasSeiAtivas_;
+  acompanhamentoSeiAtivo_ = dados[CHAVE_ACOMPANHAMENTO_SEI_] !== false;
   configAnexo_ = {
     tipoDocumento: String(dados[CHAVE_ANEXO_TIPO_] || "").trim() || "Anexo",
-    nivelAcesso: (dados[CHAVE_ANEXO_NIVEL_] in MAPA_NIVEL_ACESSO) ? dados[CHAVE_ANEXO_NIVEL_] : "publico"
+    nivelAcesso: (dados[CHAVE_ANEXO_NIVEL_] in MAPA_NIVEL_ACESSO) ? dados[CHAVE_ANEXO_NIVEL_] : "publico",
+    tipoPeloNome: dados[CHAVE_ANEXO_TIPO_PELO_NOME_] !== false
   };
 }
 
 async function carregarPreferenciaFerramentas_() {
   try {
-    lerPreferenciasFerramentas_(await chrome.storage.local.get([CHAVE_FERRAMENTAS_SEI_, CHAVE_ANOTACAO_SEI_, CHAVE_ANEXO_TIPO_, CHAVE_ANEXO_NIVEL_]));
+    lerPreferenciasFerramentas_(await chrome.storage.local.get([CHAVE_FERRAMENTAS_SEI_, CHAVE_ANOTACAO_SEI_, CHAVE_ACOMPANHAMENTO_SEI_, CHAVE_ANEXO_TIPO_, CHAVE_ANEXO_NIVEL_, CHAVE_ANEXO_TIPO_PELO_NOME_]));
   } catch (e) { ferramentasSeiAtivas_ = true; anotacaoSeiAtiva_ = true; }
   return ferramentasSeiAtivas_;
 }
 
+function garantirCartoesDaArvore_() {
+  garantirCartaoAnotacao_();
+  garantirCartaoAcompanhamento_();
+}
+
 function aplicarVisibilidadeFerramentas_() {
   if (!ferramentasSeiAtivas_) esconderZonaAnexo_();
-  if (location.href.includes("procedimento_trabalhar")) garantirCartaoAnotacao_();
+  if (location.href.includes("procedimento_trabalhar")) garantirCartoesDaArvore_();
 }
 
 /* ===================== inicialização (sempre por último) =====================
@@ -2457,8 +3056,8 @@ if (window.top === window) {
     carregarPreferenciaFerramentas_()
       .catch(() => {})
       .then(() => {
-        garantirCartaoAnotacao_();
-        setInterval(garantirCartaoAnotacao_, 1000);
+        garantirCartoesDaArvore_();
+        setInterval(garantirCartoesDaArvore_, 1000);
       });
     iniciarAnexoPorArraste_();
   }
@@ -2473,7 +3072,7 @@ if (window.top === window) {
       iniciarVigilancia_();
     }
     // Botão do painel da extensão: vale na hora para esta aba.
-    if (area === "local" && (mudancas[CHAVE_FERRAMENTAS_SEI_] || mudancas[CHAVE_ANOTACAO_SEI_] || mudancas[CHAVE_ANEXO_TIPO_] || mudancas[CHAVE_ANEXO_NIVEL_])) {
+    if (area === "local" && (mudancas[CHAVE_FERRAMENTAS_SEI_] || mudancas[CHAVE_ANOTACAO_SEI_] || mudancas[CHAVE_ACOMPANHAMENTO_SEI_] || mudancas[CHAVE_ANEXO_TIPO_] || mudancas[CHAVE_ANEXO_NIVEL_] || mudancas[CHAVE_ANEXO_TIPO_PELO_NOME_])) {
       // Relê as duas juntas: a anotação pode herdar a chave de anexos (migração).
       carregarPreferenciaFerramentas_().then(aplicarVisibilidadeFerramentas_);
     }

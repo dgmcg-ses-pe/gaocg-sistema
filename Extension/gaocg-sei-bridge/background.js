@@ -331,9 +331,76 @@ async function consultarNumeroSofCapturado_(numeroProcesso) {
   return { ok: true, numero: achado.numero, capturadoEm: achado.capturadoEm };
 }
 
+/**
+ * Acesso ao app GAOCG para o botão "Anexar documentos do processo" (2026-11-05). O próprio
+ * app avisa a sessão a cada login, troca de senha e saída (js/sei-bridge.js). O token fica
+ * em storage.session: some ao fechar o navegador e, por padrão, não é visível para content
+ * scripts - a página do SEI pede a ação daqui e só recebe o resultado.
+ */
+const URL_API_GAOCG_ = "https://script.google.com/macros/s/AKfycbzbLozyF4h0HLbCeJdWyj1skAmxgrUhjV17FvKzXKVqF9l3gIAnS6ufmvj-PvjAOv4ZTg/exec";
+const CHAVE_SESSAO_GAOCG_ = "sessaoGaocg";
+const ACOES_DOCUMENTOS_GAOCG_ = ["listarDocumentosProcesso", "baixarDocumentoProcesso"];
+const ESPERAS_API_GAOCG_MS_ = [800, 2500];
+
+async function guardarSessaoGaocg_(token) {
+  if (token) await chrome.storage.session.set({ [CHAVE_SESSAO_GAOCG_]: token });
+  else await chrome.storage.session.remove(CHAVE_SESSAO_GAOCG_);
+}
+
+/** Só ações de leitura passam por aqui, então repetir é seguro: a primeira chamada costuma pegar o script frio. */
+async function postarNoAppGaocg_(corpo) {
+  for (let tentativa = 0; ; tentativa++) {
+    try {
+      const resposta = await fetch(URL_API_GAOCG_, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify(corpo)
+      });
+      if (!resposta.ok) throw new Error("O app GAOCG respondeu com erro (HTTP " + resposta.status + ").");
+      return await resposta.json();
+    } catch (erro) {
+      if (tentativa >= ESPERAS_API_GAOCG_MS_.length) throw erro;
+      await new Promise(r => setTimeout(r, ESPERAS_API_GAOCG_MS_[tentativa]));
+    }
+  }
+}
+
+async function chamarAppGaocg_(acao, dados) {
+  if (!ACOES_DOCUMENTOS_GAOCG_.includes(acao)) return { ok: false, erro: "Ação não permitida." };
+  const guardado = await chrome.storage.session.get(CHAVE_SESSAO_GAOCG_);
+  const token = guardado[CHAVE_SESSAO_GAOCG_];
+  const semSessao = "Entre no app GAOCG neste navegador e tente de novo.";
+  if (!token) return { ok: false, erro: semSessao };
+  const json = await postarNoAppGaocg_(Object.assign({}, dados, { action: acao, token: token }));
+  if (json.ok) return { ok: true, dados: json.data };
+  if (json.error && json.error.toLowerCase().indexOf("sessão") !== -1) {
+    await guardarSessaoGaocg_(null);
+    return { ok: false, erro: semSessao };
+  }
+  return { ok: false, erro: json.error || "O app GAOCG não respondeu." };
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message || message.type !== "DOCUMENTOS_GAOCG") return false;
+  if (sender.id !== chrome.runtime.id || !sender.tab || !/^https:\/\/sei\.pe\.gov\.br\//.test(sender.url || "")) {
+    sendResponse({ ok: false, erro: "Origem não permitida." });
+    return false;
+  }
+  chamarAppGaocg_(message.acao, message.dados)
+    .then(sendResponse)
+    .catch(erro => sendResponse({ ok: false, erro: String(erro && erro.message ? erro.message : erro) }));
+  return true;
+});
+
 chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
   (async () => {
     try {
+      if (message && message.type === "SESSAO_GAOCG") {
+        await guardarSessaoGaocg_(message.token);
+        sendResponse({ ok: true });
+        return;
+      }
+
       if (message && message.type === "CONSULTAR_NUMERO_SOF") {
         sendResponse(await consultarNumeroSofCapturado_(message.numeroProcesso));
         return;

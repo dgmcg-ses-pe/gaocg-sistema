@@ -19,6 +19,7 @@
     button:disabled { opacity: .6; cursor: default; }
     .campo { display: block; font-size: 12px; color: #555; margin-top: 8px; }
     .campo input, .campo select { display: block; width: 100%; box-sizing: border-box; font: inherit; color: #222; padding: 4px 6px; margin-top: 2px; }
+    .caixa { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #222; margin-top: 8px; }
     .rodape { font-size: 11px; color: #777; margin: 4px 0 0; }
   </style>
 </head>
@@ -39,7 +40,11 @@
       <span class="status" id="statusFerramentas">…</span>
       <button type="button" id="btnFerramentas" disabled>…</button>
     </div>
-    <label class="campo" for="anexoTipo">Tipo do documento
+    <label class="caixa" for="anexoTipoPeloNome">
+      <input type="checkbox" id="anexoTipoPeloNome">
+      Identificar o tipo pelo nome do arquivo
+    </label>
+    <label class="campo" for="anexoTipo">Tipo padrão (se o nome não indicar)
       <input type="text" id="anexoTipo" maxlength="80" autocomplete="off">
     </label>
     <label class="campo" for="anexoNivel">Nível de acesso
@@ -57,6 +62,15 @@
     <div class="linha">
       <span class="status" id="statusAnotacao">…</span>
       <button type="button" id="btnAnotacao" disabled>…</button>
+    </div>
+  </div>
+
+  <div class="item">
+    <p class="item-titulo">Acompanhamento Especial</p>
+    <p>Mostra o grupo, a unidade e o objeto do processo, na unidade ativa do SEI, e o botão para anexar os documentos da base.</p>
+    <div class="linha">
+      <span class="status" id="statusAcompanhamento">…</span>
+      <button type="button" id="btnAcompanhamento" disabled>…</button>
     </div>
   </div>
 
