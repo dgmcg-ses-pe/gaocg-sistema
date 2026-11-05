@@ -17,6 +17,9 @@ const Api = (function () {
 
   function definirToken(novoToken) {
     token = novoToken;
+    // Login, troca de senha e saída passam todos por aqui: a extensão acompanha a sessão
+    // para o botão "Anexar documentos do processo" do SEI (ver js/sei-bridge.js).
+    if (typeof SeiBridge !== 'undefined') SeiBridge.compartilharSessao(novoToken);
   }
 
   function chaveCache(action, payload) {

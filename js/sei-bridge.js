@@ -47,6 +47,19 @@ const SeiBridge = (function () {
   }
 
   /**
+   * Avisa a extensão da sessão atual (null ao sair). Silencioso: sem a extensão
+   * instalada, o app segue igual, e ninguém está esperando por isto na tela.
+   */
+  function compartilharSessao(token) {
+    if (!extensaoDisponivel()) return;
+    try {
+      chrome.runtime.sendMessage(idExtensao(), { type: 'SESSAO_GAOCG', token: token || null }, () => {
+        void chrome.runtime.lastError; // sem isso o Chrome loga "Unchecked runtime.lastError"
+      });
+    } catch (e) { /* extensão indisponível */ }
+  }
+
+  /**
    * chrome.runtime.sendMessage é baseado em callback e sinaliza falha por
    * chrome.runtime.lastError (que PRECISA ser lido, senão o Chrome loga
    * "Unchecked runtime.lastError" no console). Aqui vira Promise, com um
@@ -282,5 +295,5 @@ const SeiBridge = (function () {
     }
   }
 
-  return { enviarSof, extensaoDisponivel, consultarNumeroSof, prepararHtmlParaEditor_ };
+  return { enviarSof, extensaoDisponivel, consultarNumeroSof, prepararHtmlParaEditor_, compartilharSessao };
 })();
