@@ -16,10 +16,6 @@ const TelaRecibos = (function () {
   const TAMANHO_PAGINA_TODOS_ = 100000;
   let contadorLinhasParcelaDividida = 0;
   let historicoRecibosUnidade = [];
-  // Notas de Empenho da unidade selecionada (sessão 2026-07-29) - alimenta o
-  // <datalist> de "Nota de Empenho" e o autopreenchimento de Objeto ao
-  // escolher/digitar uma NE existente (fecha a cadeia SOF->NE->Recibo).
-  let nesDaUnidadeAtual = [];
   // Objetos com SOF/NE já cadastrados pra unidade selecionada (sessão
   // 2026-07-30) - só usada em "Novo processo de Recibo", como fallback do
   // autopreenchimento por Objeto quando ainda não existe nenhum Recibo
@@ -852,33 +848,152 @@ const TelaRecibos = (function () {
     return { base64, nome: arquivo.name, tipo: arquivo.type };
   }
 
-  /** Monta as <option> de um <datalist> de Notas de Empenho (sessão 2026-07-29). */
-  function opcoesDatalistNe_(nes) {
-    return nes.map(n => `<option value="${UI.escaparHtml(n.numero_ne)}">${UI.escaparHtml(n.objeto || '')}</option>`).join('');
+  /** Comparação de Objeto/número de NE: mesma tolerância (caixa e espaços) usada no autopreenchimento por Objeto. */
+  function chaveNe_(texto) {
+    return String(texto === null || texto === undefined ? '' : texto).trim().toLowerCase();
+  }
+
+  /** NEs da lista cujo `objeto` é o informado, sem repetir número. Sem objeto, nenhuma. */
+  function nesDoObjeto_(nes, objeto) {
+    const chaveObjeto = chaveNe_(objeto);
+    if (!chaveObjeto) return [];
+    const vistos = new Set();
+    return nes.filter(n => {
+      const numero = chaveNe_(n.numero_ne);
+      if (!numero || chaveNe_(n.objeto) !== chaveObjeto || vistos.has(numero)) return false;
+      vistos.add(numero);
+      return true;
+    });
   }
 
   /**
-   * Ao digitar/escolher (via datalist) um número de Nota de Empenho que bate
-   * exatamente com uma NE cadastrada na unidade, sugere o Objeto (e a Fonte)
-   * dela nos campos indicados - fecha a cadeia SOF->NE->Recibo (sessão
-   * 2026-07-29). Não sobrescreve nada se não houver correspondência exata
-   * (nem toda "Nota de Empenho" digitada precisa corresponder a uma NE
-   * rastreada no sistema - ex. dado histórico migrado).
+   * Campo "Nota de Empenho" do Recibo (novo e edição): só permite escolher uma
+   * NE já cadastrada na unidade para o Objeto selecionado (pedido do usuário).
+   * NE, SOF e Objeto se ligam assim: cada linha de fonte da SOF tem seu Objeto,
+   * e a NE guarda o Objeto da linha a que foi associada (listarNotasEmpenhoPorUnidade).
+   *
+   * A instância guarda as próprias NEs e referências aos elementos: um formulário
+   * minimizado perde os ids e não pode enxergar as NEs de outro formulário aberto
+   * depois (ver minimizarModalAtivo_, js/app.js).
+   *
+   * NE antiga (`neOriginal`, só na edição): se a NE salva não está na lista do
+   * Objeto salvo (dado histórico, NE excluída, NE sem Objeto), ela aparece como
+   * opção própria e pode ser mantida enquanto o Objeto não mudar, com aviso
+   * explícito. Sem isso, o recibo não poderia ser editado sem perder o valor. O
+   * backend aplica a mesma regra (erroNeNaEdicaoRecibo_, Recibos.gs).
+   *
+   * Objeto sem NE continua podendo ser salvo sem NE (rascunho incremental).
    */
-  function ligarAutopreenchimentoNe_(inputId, objetoElId, fonteElId, obterNes) {
-    const inputEl = document.getElementById(inputId);
-    const aplicar = function () {
-      const valor = inputEl.value.trim().toLowerCase();
-      if (!valor) return;
-      const bateu = obterNes().find(n => String(n.numero_ne || '').toLowerCase() === valor);
-      if (!bateu) return;
-      const objetoEl = document.getElementById(objetoElId);
-      if (objetoEl && bateu.objeto) objetoEl.value = bateu.objeto;
-      const fonteEl = document.getElementById(fonteElId);
-      if (fonteEl && bateu.fonte) fonteEl.value = bateu.fonte;
-    };
-    inputEl.addEventListener('input', aplicar);
-    inputEl.addEventListener('change', aplicar);
+  function criarSeletorNe_({ selectEl, ajudaEl, objetoEl, fonteEl, estadoInicial, nesIniciais, neOriginal, objetoOriginal }) {
+    let estado = estadoInicial;
+    let nes = nesIniciais || [];
+    let neRemovida = '';
+    const neSalva = String(neOriginal === null || neOriginal === undefined ? '' : neOriginal).trim();
+
+    const objetoAtual = () => objetoEl.value.trim();
+    const objetoEhOOriginal = () => !!neSalva && chaveNe_(objetoAtual()) === chaveNe_(objetoOriginal);
+    const listaAtual = () => (estado === 'pronto' ? nesDoObjeto_(nes, objetoAtual()) : []);
+    /** A NE salva, quando ela está fora da lista e o Objeto ainda é o salvo. Senão, ''. */
+    function neAntigaVigente_(lista) {
+      if (estado !== 'pronto' || !objetoEhOOriginal()) return '';
+      return lista.some(n => chaveNe_(n.numero_ne) === chaveNe_(neSalva)) ? '' : neSalva;
+    }
+
+    function textoPlaceholder_(lista) {
+      if (estado === 'sem_unidade') return 'Selecione a unidade primeiro';
+      if (estado === 'carregando') return 'Carregando as NEs da unidade...';
+      if (estado === 'erro') return 'Não foi possível carregar as NEs';
+      if (!objetoAtual()) return 'Selecione o objeto primeiro';
+      return lista.length ? 'Selecione a NE...' : 'Nenhuma NE cadastrada para este objeto';
+    }
+
+    function renderAjuda_() {
+      const lista = listaAtual();
+      const neAntiga = neAntigaVigente_(lista);
+      const valor = selectEl.value;
+      const objeto = objetoAtual();
+      let aviso = '';
+      let ajuda = '';
+      if (neAntiga && chaveNe_(valor) === chaveNe_(neAntiga)) {
+        const onde = objeto ? `para o objeto "${objeto}"` : 'porque o recibo não tem objeto';
+        aviso = `⚠ A NE atual (${neAntiga}) não está na lista de NEs cadastradas ${onde}. Ela será mantida ao salvar` +
+          (lista.length ? '; para corrigir, escolha uma NE da lista.' : '.');
+      } else if (neAntiga) {
+        aviso = valor
+          ? `⚠ Ao salvar, a NE atual (${neAntiga}, fora da lista) será substituída pela NE escolhida.`
+          : `⚠ Ao salvar, a NE atual (${neAntiga}, fora da lista) será removida do recibo.`;
+      } else if (neRemovida) {
+        aviso = `⚠ A NE ${neRemovida} foi removida porque o objeto do recibo mudou.`;
+      }
+      if (estado === 'erro') ajuda = 'Troque a unidade ou reabra o formulário para tentar de novo.';
+      else if (estado === 'pronto' && !objeto) ajuda = 'A lista mostra só as NEs cadastradas para o objeto escolhido.';
+      else if (estado === 'pronto' && !lista.length) ajuda = `Esta unidade não tem NE cadastrada para o objeto "${objeto}". Cadastre a NE em Notas de Empenho para poder selecioná-la.`;
+
+      ajudaEl.textContent = [aviso, ajuda].filter(Boolean).join(' ');
+      ajudaEl.classList.toggle('oculto', !aviso && !ajuda);
+      ajudaEl.classList.toggle('aviso-divergencia', !!aviso);
+    }
+
+    /**
+     * Refaz a lista para o Objeto atual. `candidatos` são NEs sugeridas, em ordem
+     * de preferência; só entra a que pertence ao Objeto. Depois vale a NE já
+     * selecionada e, voltando ao Objeto salvo, a NE salva. O que não pertence ao
+     * novo Objeto é limpo, com aviso.
+     */
+    function atualizar(candidatos) {
+      const anterior = selectEl.value;
+      const lista = listaAtual();
+      const neAntiga = neAntigaVigente_(lista);
+      const procurar = valor => lista.find(n => chaveNe_(n.numero_ne) === chaveNe_(valor));
+      const ordem = (candidatos || []).concat([anterior, objetoEhOOriginal() ? neSalva : '']).filter(Boolean);
+      const escolhida = ordem.map(procurar).find(Boolean);
+      const valor = escolhida ? String(escolhida.numero_ne) : neAntiga;
+
+      selectEl.innerHTML = '';
+      selectEl.add(new Option(textoPlaceholder_(lista), ''));
+      lista.forEach(n => selectEl.add(new Option(n.fonte ? `${n.numero_ne} - ${n.fonte}` : String(n.numero_ne), String(n.numero_ne))));
+      if (neAntiga) selectEl.add(new Option(`${neAntiga} (NE atual, fora da lista)`, neAntiga));
+      selectEl.value = valor;
+      selectEl.disabled = !lista.length;
+
+      neRemovida = anterior && !valor ? anterior : '';
+      renderAjuda_();
+    }
+
+    /** `novoEstado`: 'sem_unidade', 'carregando', 'erro' ou 'pronto'. Descarta a seleção anterior: ela era de outra unidade. */
+    function definirCarga(novoEstado, novasNes) {
+      estado = novoEstado;
+      nes = novasNes || [];
+      selectEl.innerHTML = '';
+      atualizar();
+    }
+
+    /** Mensagem de erro se a NE selecionada não puder ser salva; '' se puder. */
+    function validar() {
+      const ne = selectEl.value.trim();
+      if (!ne) return '';
+      const lista = listaAtual();
+      if (lista.some(n => chaveNe_(n.numero_ne) === chaveNe_(ne))) return '';
+      if (chaveNe_(ne) === chaveNe_(neAntigaVigente_(lista))) return '';
+      return objetoAtual()
+        ? `A Nota de Empenho ${ne} não está cadastrada para o objeto "${objetoAtual()}". Escolha uma NE da lista.`
+        : 'Selecione o objeto antes de escolher a Nota de Empenho.';
+    }
+
+    // Escolher a NE preenche a Fonte com a dela. O evento avisa quem depende da
+    // Fonte (lista de Status do formulário novo).
+    selectEl.addEventListener('change', function () {
+      neRemovida = '';
+      renderAjuda_();
+      const ne = listaAtual().find(n => chaveNe_(n.numero_ne) === chaveNe_(selectEl.value));
+      if (!ne || !ne.fonte || fonteEl.value === ne.fonte) return;
+      if (!Array.from(fonteEl.options).some(o => o.value === ne.fonte)) return;
+      fonteEl.value = ne.fonte;
+      fonteEl.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    atualizar(neSalva ? [neSalva] : []);
+    return { atualizar, definirCarga, validar };
   }
 
   /**
@@ -938,7 +1053,7 @@ const TelaRecibos = (function () {
       if (!arquivo) return;
       const notaEmpenho = (obterNotaEmpenho() || '').trim();
       if (!notaEmpenho) {
-        UI.toast('Preencha a Nota de Empenho antes de anexar este documento.', 'erro');
+        UI.toast('Selecione a Nota de Empenho antes de anexar este documento.', 'erro');
         inputEl.value = '';
         return;
       }
@@ -1052,8 +1167,8 @@ const TelaRecibos = (function () {
           <div class="campo"><label>Parcela Contratual</label><input id="recParcelaContratual" type="text" inputmode="decimal" class="campo-moeda" /></div>
           <div class="campo"><label>Fonte</label><select id="recFonte"><option value="">-</option><option>TESOURO</option><option>SUS</option><option>Outra</option></select></div>
           <div class="campo"><label>Nota de Empenho</label>
-            <input id="recNotaEmpenho" list="listaNeUnidadeNovo" placeholder="Selecione a unidade pra ver as NEs cadastradas" />
-            <datalist id="listaNeUnidadeNovo"></datalist>
+            <select id="recNotaEmpenho"></select>
+            <p id="recNeAjuda" class="ajuda oculto"></p>
           </div>
           <div class="campo"><label>Competência</label><select id="recCompetencia">${UI.opcoesCompetenciaHtml('')}</select></div>
           <div class="campo"><label>Ordem Bancária (nº)</label><input id="recOrdemBancaria" /></div>
@@ -1085,6 +1200,21 @@ const TelaRecibos = (function () {
 
     ['recUnidade', 'recObjeto', 'recCompetencia', 'recStatus'].forEach(id => UI.tornarPesquisavel(id));
 
+    const seletorNe = criarSeletorNe_({
+      selectEl: document.getElementById('recNotaEmpenho'), ajudaEl: document.getElementById('recNeAjuda'),
+      objetoEl: document.getElementById('recObjeto'), fonteEl: document.getElementById('recFonte'),
+      estadoInicial: 'sem_unidade'
+    });
+    /** NEs sugeridas para o Objeto: a do último Recibo dele e, depois, a da SOF mais recente. */
+    function candidatosNeNovo_(objeto) {
+      const chave = chaveNe_(objeto);
+      const ultimoLancamento = historicoRecibosUnidade.find(r => chaveNe_(r.objeto) === chave);
+      const objetoSof = objetosSofDaUnidadeNovo.find(o => chaveNe_(o.objeto) === chave);
+      return [ultimoLancamento && ultimoLancamento.nota_empenho, objetoSof && objetoSof.numero_ne];
+    }
+    // Trocar a unidade de novo antes da resposta não pode deixar as NEs da anterior na lista.
+    let cargaUnidadeAtual = 0;
+
     document.getElementById('recUnidade').addEventListener('change', async function () {
       const unidade = unidades.find(u => u.id === this.value);
       document.getElementById('recOss').value = unidade ? unidade.oss || '' : '';
@@ -1093,26 +1223,34 @@ const TelaRecibos = (function () {
       document.getElementById('recContratoGestao').value = unidade ? unidade.contrato_gestao || '' : '';
       document.getElementById('recParcelaContratual').value = '';
       document.getElementById('recFonte').value = '';
-      document.getElementById('recNotaEmpenho').value = '';
-      document.getElementById('recObjeto').value = '';
+      const objetoEl = document.getElementById('recObjeto');
+      objetoEl.value = '';
+      UI.tornarPesquisavel(objetoEl);
       atualizarVisibilidadeParcelaDivididaTes_('recBlocoTemParcelaDividida', 'recTemParcelaDividida', 'blocoParcelaUnica', 'blocoComParcelaDividida', 'linhasParcelaDividida', '');
       historicoRecibosUnidade = [];
-      nesDaUnidadeAtual = [];
       objetosSofDaUnidadeNovo = [];
-      document.getElementById('listaNeUnidadeNovo').innerHTML = '';
-      if (!unidade) return;
+      const carga = ++cargaUnidadeAtual;
+      if (!unidade) { seletorNe.definirCarga('sem_unidade'); return; }
+      seletorNe.definirCarga('carregando');
 
-      const [resposta, nes, objetosSof] = await Promise.all([
-        Api.chamar('listarRecibos', { unidade_id: unidade.id, pageSize: 1000 }),
-        Api.chamar('listarNotasEmpenhoPorUnidade', { unidadeId: unidade.id }),
-        Api.chamar('listarObjetosSofPorUnidade', { unidadeId: unidade.id })
-      ]);
-      historicoRecibosUnidade = resposta.items.slice().sort((a, b) => b.data_criacao < a.data_criacao ? -1 : 1);
-      nesDaUnidadeAtual = nes;
-      objetosSofDaUnidadeNovo = objetosSof;
-      document.getElementById('listaNeUnidadeNovo').innerHTML = opcoesDatalistNe_(nesDaUnidadeAtual);
+      try {
+        const [resposta, nes, objetosSof] = await Promise.all([
+          Api.chamar('listarRecibos', { unidade_id: unidade.id, pageSize: 1000 }),
+          Api.chamar('listarNotasEmpenhoPorUnidade', { unidadeId: unidade.id }),
+          Api.chamar('listarObjetosSofPorUnidade', { unidadeId: unidade.id })
+        ]);
+        if (carga !== cargaUnidadeAtual) return;
+        historicoRecibosUnidade = resposta.items.slice().sort((a, b) => b.data_criacao < a.data_criacao ? -1 : 1);
+        objetosSofDaUnidadeNovo = objetosSof;
+        seletorNe.definirCarga('pronto', nes);
+        // Objeto escolhido enquanto as NEs carregavam: aplica agora o autopreenchimento dele.
+        if (objetoEl.value) objetoEl.dispatchEvent(new Event('change', { bubbles: true }));
+      } catch (err) {
+        if (carga !== cargaUnidadeAtual) return;
+        seletorNe.definirCarga('erro');
+        UI.toast(err.message, 'erro');
+      }
     });
-    ligarAutopreenchimentoNe_('recNotaEmpenho', 'recObjeto', 'recFonte', () => nesDaUnidadeAtual);
 
     document.getElementById('recObjeto').addEventListener('change', async function () {
       const objeto = this.value.trim();
@@ -1121,19 +1259,18 @@ const TelaRecibos = (function () {
         document.getElementById('recContratoGestao').value = ultimoLancamento.contrato_gestao || '';
         document.getElementById('recParcelaContratual').value = ultimoLancamento.parcela_contratual || '';
         document.getElementById('recFonte').value = ultimoLancamento.fonte || '';
-        document.getElementById('recNotaEmpenho').value = ultimoLancamento.nota_empenho || '';
       } else {
         // Sem Recibo lançado antes pra esse Objeto (sessão 2026-07-30) - cai
         // pro SOF/NE já cadastrados pra essa unidade+objeto, se existirem
-        // (ver listarObjetosSofPorUnidade). Continua tudo editável depois -
-        // é só um ponto de partida, não trava nenhum campo.
+        // (ver listarObjetosSofPorUnidade). É só um ponto de partida: os campos
+        // continuam editáveis, e a NE continua limitada à lista do Objeto.
         const objetoSof = objetosSofDaUnidadeNovo.find(o => (o.objeto || '').trim().toLowerCase() === objeto.toLowerCase());
         if (objetoSof) {
           document.getElementById('recParcelaContratual').value = objetoSof.parcela_mensal || '';
           document.getElementById('recFonte').value = objetoSof.fonte || '';
-          document.getElementById('recNotaEmpenho').value = objetoSof.numero_ne || '';
         }
       }
+      seletorNe.atualizar(candidatosNeNovo_(objeto));
       document.getElementById('recStatus').innerHTML = await opcoesStatus(document.getElementById('recStatus').value, document.getElementById('recFonte').value);
       UI.tornarPesquisavel('recStatus');
       atualizarVisibilidadeParcelaDivididaTes_('recBlocoTemParcelaDividida', 'recTemParcelaDividida', 'blocoParcelaUnica', 'blocoComParcelaDividida', 'linhasParcelaDividida', this.value);
@@ -1158,7 +1295,7 @@ const TelaRecibos = (function () {
       }
     });
     document.getElementById('btnCancelarRec').addEventListener('click', UI.fecharModal);
-    document.getElementById('btnSalvarRec').addEventListener('click', salvarReciboNovo);
+    document.getElementById('btnSalvarRec').addEventListener('click', () => salvarReciboNovo(seletorNe));
 
     ligarAnexoComOcr_({
       inputEl: document.getElementById('recNotaLiquidacaoArquivo'), tipo: 'nota_liquidacao',
@@ -1294,7 +1431,7 @@ const TelaRecibos = (function () {
       const arquivo = inputNovoLe.files[0];
       if (!arquivo) return;
       const notaEmpenho = (obterNotaEmpenho() || '').trim();
-      if (!notaEmpenho) { UI.toast('Preencha a Nota de Empenho antes de anexar este documento.', 'erro'); inputNovoLe.value = ''; return; }
+      if (!notaEmpenho) { UI.toast('Selecione a Nota de Empenho antes de anexar este documento.', 'erro'); inputNovoLe.value = ''; return; }
       try {
         if (arquivo.size > 8 * 1024 * 1024) throw new Error('Arquivo muito grande (máximo 8MB).');
         const base64 = await UI.lerArquivoBase64(arquivo);
@@ -1331,7 +1468,7 @@ const TelaRecibos = (function () {
       const arquivo = inputNovoOb.files[0];
       if (!arquivo) return;
       const notaEmpenho = (obterNotaEmpenho() || '').trim();
-      if (!notaEmpenho) { UI.toast('Preencha a Nota de Empenho antes de anexar este documento.', 'erro'); inputNovoOb.value = ''; return; }
+      if (!notaEmpenho) { UI.toast('Selecione a Nota de Empenho antes de anexar este documento.', 'erro'); inputNovoOb.value = ''; return; }
       try {
         if (arquivo.size > 8 * 1024 * 1024) throw new Error('Arquivo muito grande (máximo 8MB).');
         const base64 = await UI.lerArquivoBase64(arquivo);
@@ -1473,7 +1610,7 @@ const TelaRecibos = (function () {
     });
   }
 
-  async function salvarReciboNovo() {
+  async function salvarReciboNovo(seletorNe) {
     const erroEl = document.getElementById('recErro');
     erroEl.classList.add('oculto');
     // Portao unico dos campos monetarios (UI.validarCamposMoeda, js/app.js):
@@ -1481,6 +1618,8 @@ const TelaRecibos = (function () {
     if (!UI.validarCamposMoeda()) return;
     const unidadeId = document.getElementById('recUnidade').value;
     if (!unidadeId) { UI.mostrarErro(erroEl, 'Selecione a unidade.'); return; }
+    const erroNe = seletorNe.validar();
+    if (erroNe) { UI.mostrarErro(erroEl, erroNe); return; }
 
     const dadosBase = {
       unidade_id: unidadeId,
@@ -1647,7 +1786,9 @@ const TelaRecibos = (function () {
       grupoId ? Api.chamar('listarRecibosPorGrupo', { grupoId }) : Promise.resolve([]),
       Api.chamar('listarObservacoesRecibo', { recibo_ref_id: refIdObservacoes })
     ]);
-    nesDaUnidadeAtual = nesDaUnidade;
+    // Objeto fora da lista global (removido dela depois): sem esta opção, o campo
+    // abriria vazio e a NE salva seria tratada como se o recibo não tivesse objeto.
+    const objetoForaDaLista = recibo.objeto && !opcoesObjeto.some(o => o.valor === recibo.objeto);
     const corpo = `
       <form id="formReciboEdicao">
         ${recibo.divergente_da_unidade ? '<p class="aviso-divergencia">⚠ OSS/CNPJ divergem do cadastro atual da unidade.</p>' : ''}
@@ -1660,6 +1801,7 @@ const TelaRecibos = (function () {
           <div class="campo"><label>Objeto *</label>
             <select id="recEdObjeto">
               <option value="">Selecione...</option>
+              ${objetoForaDaLista ? `<option selected>${UI.escaparHtml(recibo.objeto)}</option>` : ''}
               ${opcoesObjeto.map(o => `<option ${recibo.objeto === o.valor ? 'selected' : ''}>${UI.escaparHtml(o.valor)}</option>`).join('')}
             </select>
           </div>
@@ -1667,8 +1809,8 @@ const TelaRecibos = (function () {
           <div class="campo"><label>Parcela Contratual</label><input id="recEdParcelaContratual" type="text" inputmode="decimal" class="campo-moeda" value="${recibo.parcela_contratual}" /></div>
           <div class="campo"><label>Fonte</label><select id="recEdFonte">${['', 'TESOURO', 'SUS', 'Outra'].map(f => `<option ${recibo.fonte === f ? 'selected' : ''}>${f}</option>`).join('')}</select></div>
           <div class="campo"><label>Nota de Empenho</label>
-            <input id="recEdNotaEmpenho" list="listaNeUnidadeEd" value="${UI.escaparHtml(recibo.nota_empenho)}" />
-            <datalist id="listaNeUnidadeEd">${opcoesDatalistNe_(nesDaUnidade)}</datalist>
+            <select id="recEdNotaEmpenho"></select>
+            <p id="recEdNeAjuda" class="ajuda oculto"></p>
           </div>
           <div class="campo"><label>Competência</label><select id="recEdCompetencia">${UI.opcoesCompetenciaHtml(recibo.competencia)}</select></div>
           <div class="campo"><label>Nº Processo</label><input id="recEdNumeroProcesso" value="${UI.escaparHtml(recibo.numero_processo)}" /></div>
@@ -1712,13 +1854,19 @@ const TelaRecibos = (function () {
     ligarAcoesObservacoes_(document.getElementById('recEdObservacoesLista'), refIdObservacoes);
 
     ['recEdObjeto', 'recEdCompetencia'].forEach(id => UI.tornarPesquisavel(id));
-    ligarAutopreenchimentoNe_('recEdNotaEmpenho', 'recEdObjeto', 'recEdFonte', () => nesDaUnidadeAtual);
+    const seletorNe = criarSeletorNe_({
+      selectEl: document.getElementById('recEdNotaEmpenho'), ajudaEl: document.getElementById('recEdNeAjuda'),
+      objetoEl: document.getElementById('recEdObjeto'), fonteEl: document.getElementById('recEdFonte'),
+      estadoInicial: 'pronto', nesIniciais: nesDaUnidade,
+      neOriginal: recibo.nota_empenho, objetoOriginal: recibo.objeto
+    });
 
     // Objeto pode mudar de/para "Contrato de Gestão (TES)" durante a edição -
     // só reage se ainda não faz parte de um grupo (ver
     // atualizarVisibilidadeParcelaDivididaTes_; grupo já existente sempre
     // mostra a tabela, não dá pra "desfazer" mudando o Objeto).
     document.getElementById('recEdObjeto').addEventListener('change', function () {
+      seletorNe.atualizar();
       if (!grupoId) atualizarVisibilidadeParcelaDivididaTes_('recEdBlocoTemParcelaDividida', 'recEdTemParcelaDividida', 'blocoParcelaUnicaEd', 'blocoComParcelaDivididaEd', 'linhasParcelaDivididaEd', this.value);
     });
 
@@ -1778,10 +1926,10 @@ const TelaRecibos = (function () {
     document.getElementById('btnAddParcelaDivididaEd').addEventListener('click', () => adicionarLinhaParcelaDividida_('linhasParcelaDivididaEd', ctxEd));
 
     document.getElementById('btnCancelarRecEd').addEventListener('click', UI.fecharModal);
-    document.getElementById('btnSalvarRecEd').addEventListener('click', () => salvarReciboEdicao(recibo));
+    document.getElementById('btnSalvarRecEd').addEventListener('click', () => salvarReciboEdicao(recibo, seletorNe));
   }
 
-  async function salvarReciboEdicao(recibo) {
+  async function salvarReciboEdicao(recibo, seletorNe) {
     // Nada mudou (sessão 2026-08-13, pedido do usuário): só fecha o card em
     // vez de validar + chamar o backend à toa - mesmo dirty-tracking que já
     // decidia minimizar x fechar no clique fora (ver UI.modalFoiEditado, js/app.js).
@@ -1791,6 +1939,8 @@ const TelaRecibos = (function () {
     // Portao unico dos campos monetarios (UI.validarCamposMoeda, js/app.js):
     // recusa texto que nao vira numero em vez de gravar R$ 0,00 sem avisar.
     if (!UI.validarCamposMoeda()) return;
+    const erroNe = seletorNe.validar();
+    if (erroNe) { UI.mostrarErro(erroEl, erroNe); return; }
     const dados = {
       oss_snapshot: document.getElementById('recEdOss').value.trim(),
       cnpj_snapshot: document.getElementById('recEdCnpj').value.trim(),
