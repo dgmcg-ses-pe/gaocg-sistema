@@ -3108,6 +3108,18 @@ automática do dado antigo (`migrarAcoesUnidadesExistentes`).
   cadastrada aparece em "NÃO encontradas" no log, sem travar o resto da
   importação.
 
+## Documento da SOF reestruturado conforme o modelo do SEI (sessão 2026-11-06, publicado, aguardando teste real no SEI)
+
+O usuário enviou telas do modelo "SES - SOF" do SEI e do documento que o app estava gerando. `montarDocumentoSeiHtml_` (`js/sof.js`) e `prepararHtmlParaEditor_` (`js/sei-bridge.js`) foram ajustados para seguir o modelo:
+
+- **Entrou:** data à direita ("Em, 06 de novembro de 2026", a partir de `sei_data`), `@nome_destinatario@`, quadro do PCA/DFD (centralizado, em Times e negrito como no modelo; os campos já existiam no formulário, mas não saíam no documento), "CEO E-fisco" em Licitações, e `@nome_interessado@`/`@cargo_interessado@` ao final.
+- **Saiu do documento:** quadros de Assinatura da Nota de Empenho e de Liquidação, linha TOTAL do cronograma, "Contrato CEO" solto após Grupo de despesa e a sigla "SOF" antes do número no título. Os campos de assinatura continuam no formulário e na planilha, mas não são mais impressos.
+- **Mudou:** tabela do pleito com as células mescladas do modelo; cronograma com mínimo de 3 linhas e manutenção sempre visível com mínimo de 10 linhas e "R$" nas vazias; rótulos NOME/CARGO/SETOR em negrito.
+- **Medidas:** texto 12pt, título/data 11pt, tabelas 11pt com 900px de largura. Calculado medindo Calibri no navegador contra as telas enviadas, que estavam em 90% de zoom. O cronograma pode passar de 900px quando há valores muito altos.
+- **Variáveis `@...@`:** mantidas literais como aparecem no modelo. Falta confirmar no SEI real se elas são resolvidas ou se ficam como texto no documento salvo.
+
+**Testado:** HTML gerado com o código real, passando por `prepararHtmlParaEditor_` e `sanitizarHtmlDocumento_`, em SOF vazia e preenchida. **Não testado:** envio real ao SEI (CKEditor pode alterar parte dos estilos).
+
 ## Referências úteis
 - Repositório: `https://github.com/AndersonG2021/APP-GAOCG.git`, branch `main`, publicado via GitHub Pages.
 - Backend roda só no Apps Script; **sempre que um `.gs` mudar, colar manualmente, reimplantar (Implantar → Gerenciar implantações → editar → Nova versão) E atualizar a cópia correspondente em `/backend` neste repositório**, no mesmo commit.

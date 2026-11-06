@@ -2363,11 +2363,10 @@ const TelaSof = (function () {
     });
   }
 
-  /** Divide um array em grupos de N (usado só pra montar a tabela de "Assinalar o pleito" no documento gerado, 4 colunas por linha). */
-  function agruparEm_(lista, tamanho) {
-    const grupos = [];
-    for (let i = 0; i < lista.length; i += tamanho) grupos.push(lista.slice(i, i + tamanho));
-    return grupos;
+  /** Data do documento no formato do modelo do SEI: "Em, 06 de novembro de 2026". */
+  function dataPorExtensoSei_(iso) {
+    const partes = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')) || /^(\d{4})-(\d{2})-(\d{2})/.exec(hojeIso_());
+    return `Em, ${partes[3]} de ${NOMES_MESES_SEI_[Number(partes[2]) - 1].toLowerCase()} de ${partes[1]}`;
   }
 
   /**
@@ -2376,6 +2375,12 @@ const TelaSof = (function () {
    * Não reproduz a marcação bagunçada de spans aninhados do export original do
    * SEI - usa HTML/CSS limpo com o mesmo layout visual, sem o timbre (imagem)
    * nem o rodapé de endereço da Secretaria (pedido explícito do usuário).
+   *
+   * A estrutura segue o modelo "SES - SOF" do SEI (telas enviadas pelo usuário
+   * em 2026-11-06), inclusive as tabelas que saem em branco e as variáveis
+   * @nome_destinatario@/@nome_interessado@/@cargo_interessado@, mantidas
+   * literais como no modelo. Todo estilo novo daqui precisa ser repetido em
+   * prepararHtmlParaEditor_ (js/sei-bridge.js).
    */
   function montarDocumentoSeiHtml_(sof) {
     const nl2br_ = texto => UI.escaparHtml(texto || '').replace(/\n/g, '<br>');
@@ -2391,29 +2396,51 @@ const TelaSof = (function () {
     // merge - e é literalmente a mesma conta que o formulário já faz.
     const totalPorCronograma_ = f => (f.cronograma || []).reduce((s, c) => s + (Number(c.valor) || 0), 0);
     const fontes = sof.fontes || [];
-    const totalFontes = fontes.reduce((s, f) => s + totalPorCronograma_(f), 0);
     const linhasManutencao = parseManutencaoSei_(sof.sei_manutencao_linhas).filter(l => l.codigo || l.elemento || l.valor);
     const totalManutencao = linhasManutencao.reduce((s, l) => s + (Number(l.valor) || 0), 0);
+    const LINHA_EM_BRANCO = '<p>&nbsp;</p>';
+    // Tabelas do modelo têm um mínimo de linhas: 3 no cronograma, 10 na manutenção.
+    const LINHAS_MINIMAS_CRONOGRAMA = 3;
+    const LINHAS_MINIMAS_MANUTENCAO = 10;
 
     const solicitacaoHtml = OPCOES_SEI_SOLICITACAO.map(op =>
       `<p>( ${marcado_(sof.sei_tipo_solicitacao, op)} ) ${UI.escaparHtml(op)}</p>`).join('');
 
-    const pleitoHtml = agruparEm_(OPCOES_SEI_PLEITO, 4).map(linha =>
-      `<tr>${linha.map(op => `<td>( ${marcado_(sof.sei_tipo_pleito, op)} ) ${UI.escaparHtml(op)}</td>`).join('')}</tr>`).join('');
+    // Layout fixo do modelo: as duas últimas opções ocupam duas linhas (rowspan).
+    const celulaPleito_ = (op, atributos) =>
+      `<td${atributos || ''}>( ${marcado_(sof.sei_tipo_pleito, op)} ) ${UI.escaparHtml(op)}</td>`;
+    const largura_ = pct => ` style="width:${pct}%"`;
+    const pleitoHtml = `
+      <tr>${celulaPleito_('Licitação', largura_(20))}${celulaPleito_('Adesão à ARP', largura_(24))}${celulaPleito_('Reajuste', largura_(26))}${celulaPleito_('TAC', largura_(30))}</tr>
+      <tr>${celulaPleito_('Dispensa de Licitação')}${celulaPleito_('Consumo de ARP')}${celulaPleito_('Acréscimo Contratual')}${celulaPleito_('Contratação Direta')}</tr>
+      <tr>${celulaPleito_('Inexigibilidade')}${celulaPleito_('Edital de Credenciamento')}${celulaPleito_('Emenda Parlamentar Estadual', ' rowspan="2" class="sei-meio"')}${celulaPleito_('Reequilíbrio Econômico Financeiro', ' rowspan="2" class="sei-meio"')}</tr>
+      <tr>${celulaPleito_('Formação de ARP')}${celulaPleito_('Adesão a Credenciamento')}</tr>`;
 
-    const fontesHtml = fontes.length
-      ? fontes.map(f => {
-          const porMes = {};
-          (f.cronograma || []).forEach(c => { porMes[c.mes] = c.valor; });
-          const celulasMeses = Array.from({ length: 12 }, (_, i) => `<td>${porMes[i + 1] ? UI.formatarMoeda(porMes[i + 1]) : ''}</td>`).join('');
-          return `<tr><td>${UI.escaparHtml(f.codigo_poas || '')}</td><td>${UI.escaparHtml(f.fonte || '')}</td>${celulasMeses}<td>${UI.formatarMoeda(totalPorCronograma_(f))}</td></tr>`;
-        }).join('')
-      : `<tr><td colspan="15" style="text-align:center">Nenhuma fonte cadastrada no SOF.</td></tr>`;
+    const celulasEmBranco_ = n => Array.from({ length: n }, () => '<td>&nbsp;</td>').join('');
+    const fontesHtml = fontes.map(f => {
+      const porMes = {};
+      (f.cronograma || []).forEach(c => { porMes[c.mes] = c.valor; });
+      const celulasMeses = Array.from({ length: 12 }, (_, i) => `<td>${porMes[i + 1] ? UI.formatarMoeda(porMes[i + 1]) : '&nbsp;'}</td>`).join('');
+      return `<tr><td>${UI.escaparHtml(f.codigo_poas || '') || '&nbsp;'}</td><td>${UI.escaparHtml(f.fonte || '') || '&nbsp;'}</td>${celulasMeses}<td>${UI.formatarMoeda(totalPorCronograma_(f))}</td></tr>`;
+    }).join('') + Array.from({ length: Math.max(0, LINHAS_MINIMAS_CRONOGRAMA - fontes.length) }, () => `<tr>${celulasEmBranco_(15)}</tr>`).join('');
 
-    const manutencaoHtml = linhasManutencao.length
-      ? linhasManutencao.map(l => `<tr><td>${UI.escaparHtml(l.codigo || '')}</td><td>${UI.escaparHtml(l.elemento || '')}</td><td>${UI.formatarMoeda(l.valor)}</td></tr>`).join('')
-        + `<tr><td></td><td><strong>TOTAL</strong></td><td><strong>${UI.formatarMoeda(totalManutencao)}</strong></td></tr>`
-      : '';
+    const manutencaoHtml = linhasManutencao.map(l =>
+      `<tr><td>${UI.escaparHtml(l.codigo || '') || '&nbsp;'}</td><td>${UI.escaparHtml(l.elemento || '') || '&nbsp;'}</td><td class="sei-centro">${UI.formatarMoeda(l.valor)}</td></tr>`).join('')
+      + Array.from({ length: Math.max(0, LINHAS_MINIMAS_MANUTENCAO - linhasManutencao.length) }, () =>
+        '<tr><td>&nbsp;</td><td>&nbsp;</td><td class="sei-centro">R$</td></tr>').join('')
+      + `<tr><td>&nbsp;</td><td class="sei-centro"><strong>TOTAL</strong></td><td class="sei-centro"><strong>${linhasManutencao.length ? UI.formatarMoeda(totalManutencao) : 'R$'}</strong></td></tr>`;
+
+    const tabelaResponsavel_ = (titulo, nome, cargo, setor) => `
+  <table class="sei-tabela">
+    <tr><th colspan="2">${titulo}</th></tr>
+    <tr><td style="width:12.5%"><strong>NOME</strong></td><td>${UI.escaparHtml(nome || '') || '&nbsp;'}</td></tr>
+    <tr><td><strong>CARGO</strong></td><td>${UI.escaparHtml(cargo || '') || '&nbsp;'}</td></tr>
+    <tr><td><strong>SETOR</strong></td><td>${UI.escaparHtml(setor || '') || '&nbsp;'}</td></tr>
+  </table>`;
+
+    // O marcador do número (sof_numero) precisa ficar no título: a extensão o
+    // troca pelo número oficial que o SEI gera (ver content-sei.js).
+    const numeroTitulo = sof.sof_numero ? `${UI.escaparHtml(sof.sof_numero)} - ` : '';
 
     return `<!DOCTYPE html>
 <html lang="pt-br">
@@ -2421,53 +2448,69 @@ const TelaSof = (function () {
 <meta charset="utf-8" />
 <title>${UI.escaparHtml(sof.sof_numero || sof.id)} - Solicitação Orçamentária e Financeira</title>
 <style>
-  body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000; max-width: 900px; margin: 24px auto; padding: 0 16px; }
+  body { font-family: Calibri, Arial, sans-serif; font-size: 12pt; color: #000; margin: 24px; }
   p { margin: 6pt 0; text-align: justify; }
-  h2 { text-align: left; font-size: 13pt; }
-  table.sei-tabela { border-collapse: collapse; width: 100%; margin: 8px 0; }
-  table.sei-tabela td, table.sei-tabela th { border: 1px solid #000; padding: 4px 8px; font-size: 10.5pt; vertical-align: top; }
-  table.sei-tabela th { text-align: center; }
-  .sei-direita { text-align: right; }
-  .sei-assinatura-ne { background: #f1c40f; }
-  .sei-assinatura-nl { background: #e6a19b; }
+  table.sei-tabela { border-collapse: collapse; width: 900px; margin: 8px 0; }
+  table.sei-tabela td, table.sei-tabela th { border: 1px solid #000; padding: 4px 8px; font-size: 11pt; vertical-align: top; }
+  table.sei-tabela th { text-align: center; vertical-align: middle; background: #fff; }
+  .sei-titulo { font-size: 11pt; text-align: left; }
+  .sei-direita { text-align: right; font-size: 11pt; }
+  .sei-centro { text-align: center; }
+  .sei-meio { vertical-align: middle; }
+  th.sei-mes { font-weight: normal; }
+  table.sei-pca { margin: 8px auto; }
+  table.sei-tabela td.sei-pca-celula { font-family: 'Times New Roman', Times, serif; font-size: 12pt; font-weight: bold; }
 </style>
 </head>
 <body>
-  <h2>SOF ${UI.escaparHtml(sof.sof_numero || '')} - SES – Secretaria de Saúde - Solicitação Orçamentária e Financeira</h2>
-  <p>Prezado(a), Solicito:</p>
+  <p class="sei-titulo">${numeroTitulo}SES – Secretaria de Saúde - Solicitação Orçamentária e Financeira</p>
+  ${LINHA_EM_BRANCO}
+  <p class="sei-direita">${dataPorExtensoSei_(sof.sei_data)}</p>
+  <p>@nome_destinatario@</p>
+  ${LINHA_EM_BRANCO}
+  <p>Prezado(a), Solicito (assinalar com X):</p>
+  ${LINHA_EM_BRANCO}
   ${solicitacaoHtml}
 
-  <p>Em caso de envio à CPF/SAD, assinalar o pleito:</p>
+  <table class="sei-tabela sei-pca" align="center"><tr><td class="sei-pca-celula">
+    <p>Previsto no PCA? ( ${marcado_(sof.sei_previsto_pca, 'SIM')} ) SIM &nbsp; ( ${marcado_(sof.sei_previsto_pca, 'NÃO')} ) NÃO</p>
+    <p>Nº Plano de Contratações Anual (PCA): ${UI.escaparHtml(sof.sei_numero_pca || '')}</p>
+    <p>Nº Documento de Formalização da Demanda (DFD): ${UI.escaparHtml(sof.sei_numero_dfd || '')}</p>
+  </td></tr></table>
+
+  <p>Assinalar o pleito:</p>
   <table class="sei-tabela"><tbody>${pleitoHtml}</tbody></table>
 
   <p>Justificativa do pleito para a CPF/SAD:</p>
-  <p>${nl2br_(sof.sei_justificativa_pleito)}</p>
+  <p>${nl2br_(sof.sei_justificativa_pleito) || '&nbsp;'}</p>
 
   <p>Área/setor solicitante: ${UI.escaparHtml(sof.sei_area_setor_solicitante || '')}</p>
   <p>Tema POAS: ${UI.escaparHtml(sof.sei_tema_poas || '')}</p>
   <p>Objeto da despesa: ${objetoDespesaParaHtml_(sof.sei_objeto_despesa)}</p>
-
   <p>Destinação (Hospital, Geres, etc...): ${UI.escaparHtml(sof.sei_destinacao || '')}</p>
   <p>Credor: ${UI.escaparHtml(sof.sei_credor || '')}</p>
   <p>CPF/CNPJ: ${UI.escaparHtml(sof.sei_credor_cnpj || '')}</p>
   <p>Ação: ${UI.escaparHtml(sof.sei_acao || '')}</p>
   <p>Subação: ${UI.escaparHtml(sof.sei_subacao || '')}</p>
   <p>Grupo de despesa: ${UI.escaparHtml(sof.sei_grupo_despesa || '')}</p>
-  <p>Contrato CEO: ${UI.escaparHtml(sof.ceo || '')}</p>
-
+  ${LINHA_EM_BRANCO}
   <p>Valor total com cronograma de desembolso (mensal):</p>
+  ${LINHA_EM_BRANCO}
   <table class="sei-tabela">
-    <thead><tr><th>Código POAS</th><th>Fonte</th>${NOMES_MESES_SEI_.map(m => `<th>${m.substring(0, 3).toUpperCase()}</th>`).join('')}<th>Total</th></tr></thead>
+    <thead><tr><th>CÓDIGO POAS</th><th>FONTE</th>${NOMES_MESES_SEI_.map(m => `<th class="sei-mes">${m.substring(0, 3).toUpperCase()}</th>`).join('')}<th>TOTAL</th></tr></thead>
     <tbody>${fontesHtml}</tbody>
-    <tfoot><tr><td colspan="14" style="text-align:right"><strong>TOTAL</strong></td><td><strong>${UI.formatarMoeda(totalFontes)}</strong></td></tr></tfoot>
   </table>
-
+  ${LINHA_EM_BRANCO}
   <p>Medida compensatória POAS (caso seja necessário):</p>
-  <p>${nl2br_(sof.sei_medida_compensatoria_poas)}</p>
+  <p>${nl2br_(sof.sei_medida_compensatoria_poas) || '&nbsp;'}</p>
 
   <p>Para os casos de MANUTENÇÃO DE GERES, HOSPITAIS REGIONAIS e SUPRIMENTO INDIVIDUAL:</p>
-  ${manutencaoHtml ? `<table class="sei-tabela"><thead><tr><th>Código</th><th>Elemento</th><th>Valor</th></tr></thead><tbody>${manutencaoHtml}</tbody></table>` : '<p class="ajuda">-</p>'}
-
+  ${LINHA_EM_BRANCO}
+  <table class="sei-tabela">
+    <thead><tr><th style="width:32%">CÓDIGO</th><th style="width:40%">ELEMENTO</th><th style="width:28%">VALOR</th></tr></thead>
+    <tbody>${manutencaoHtml}</tbody>
+  </table>
+  ${LINHA_EM_BRANCO}
   <p>Para os casos de DESPESAS SUS/PORTARIA OU CONVÊNIO/RECURSOS PRÓPRIOS:</p>
   <p>Nº do Convênio ou Portaria: ${UI.escaparHtml(sof.sei_convenio_numero || '')}</p>
   <p>Nº do E-fisco: ${UI.escaparHtml(sof.sei_convenio_efisco || '')}</p>
@@ -2478,8 +2521,12 @@ const TelaSof = (function () {
   <p>Banco: ${UI.escaparHtml(sof.sei_contrapartida_banco || '')}</p>
 
   <p>Para os casos de LICITAÇÕES:</p>
+  ${LINHA_EM_BRANCO}
+  ${LINHA_EM_BRANCO}
   <p>Número do Contrato: ${UI.escaparHtml(sof.contrato || '')}</p>
-
+  <p>CEO E-fisco: ${UI.escaparHtml(sof.ceo || '')}</p>
+  ${LINHA_EM_BRANCO}
+  ${LINHA_EM_BRANCO}
   <p>Observações:</p>
   ${OBSERVACOES_SEI_.map(o => {
     // Sublinha só o rótulo (até os dois-pontos), igual ao modelo do SEI -
@@ -2488,32 +2535,11 @@ const TelaSof = (function () {
     const fimRotulo = o.indexOf(':');
     return fimRotulo === -1 ? `<p>${o}</p>` : `<p><u>${o.slice(0, fimRotulo + 1)}</u>${o.slice(fimRotulo + 1)}</p>`;
   }).join('')}
-
-  <table class="sei-tabela">
-    <tr><th colspan="2">SOLICITANTE</th></tr>
-    <tr><td>NOME</td><td>${UI.escaparHtml(sof.sei_solicitante_nome || '')}</td></tr>
-    <tr><td>CARGO</td><td>${UI.escaparHtml(sof.sei_solicitante_cargo || '')}</td></tr>
-    <tr><td>SETOR</td><td>${UI.escaparHtml(sof.sei_solicitante_setor || '')}</td></tr>
-  </table>
-
-  <table class="sei-tabela">
-    <tr><th colspan="2">ORDENADOR</th></tr>
-    <tr><td>NOME</td><td>${UI.escaparHtml(sof.sei_ordenador_nome || '')}</td></tr>
-    <tr><td>CARGO</td><td>${UI.escaparHtml(sof.sei_ordenador_cargo || '')}</td></tr>
-    <tr><td>SETOR</td><td>${UI.escaparHtml(sof.sei_ordenador_setor || '')}</td></tr>
-  </table>
-
-  <table class="sei-tabela">
-    <tr><th colspan="2" class="sei-assinatura-ne">ASSINATURA DA NOTA DE EMPENHO</th></tr>
-    <tr><td>NOME</td><td>${UI.escaparHtml(sof.sei_assinatura_ne_nome || '')}</td></tr>
-    <tr><td>CARGO</td><td>${UI.escaparHtml(sof.sei_assinatura_ne_cargo || '')}</td></tr>
-  </table>
-
-  <table class="sei-tabela">
-    <tr><th colspan="2" class="sei-assinatura-nl">ASSINATURA DA NOTA DE LIQUIDAÇÃO</th></tr>
-    <tr><td>NOME</td><td>${UI.escaparHtml(sof.sei_assinatura_nl_nome || '')}</td></tr>
-    <tr><td>CARGO</td><td>${UI.escaparHtml(sof.sei_assinatura_nl_cargo || '')}</td></tr>
-  </table>
+  ${LINHA_EM_BRANCO}
+  ${tabelaResponsavel_('SOLICITANTE', sof.sei_solicitante_nome, sof.sei_solicitante_cargo, sof.sei_solicitante_setor)}
+  ${tabelaResponsavel_('ORDENADOR', sof.sei_ordenador_nome, sof.sei_ordenador_cargo, sof.sei_ordenador_setor)}
+  ${LINHA_EM_BRANCO}
+  <p class="sei-centro">@nome_interessado@<br>@cargo_interessado@</p>
 </body>
 </html>`;
   }

@@ -130,14 +130,19 @@ const SeiBridge = (function () {
       });
     };
 
-    aplicar('table.sei-tabela', 'border-collapse:collapse;width:100%;margin:8px 0');
-    aplicar('table.sei-tabela td, table.sei-tabela th', 'border:1px solid #000;padding:4px 8px;font-size:10.5pt;vertical-align:top');
-    aplicar('table.sei-tabela th', 'text-align:center');
+    // A ordem importa: cada regra é somada ao fim do style, então as classes
+    // específicas ficam depois das regras gerais para prevalecer sobre elas.
+    aplicar('table.sei-tabela', 'border-collapse:collapse;width:900px;margin:8px 0');
+    aplicar('table.sei-tabela td, table.sei-tabela th', 'border:1px solid #000;padding:4px 8px;font-size:11pt;vertical-align:top');
+    aplicar('table.sei-tabela th', 'text-align:center;vertical-align:middle;background:#fff');
     aplicar('p', 'margin:6pt 0;text-align:justify');
-    aplicar('h2', 'text-align:left;font-size:13pt');
-    aplicar('.sei-direita', 'text-align:right');
-    aplicar('.sei-assinatura-ne', 'background:#f1c40f');
-    aplicar('.sei-assinatura-nl', 'background:#e6a19b');
+    aplicar('.sei-titulo', 'font-size:11pt;text-align:left');
+    aplicar('.sei-direita', 'text-align:right;font-size:11pt');
+    aplicar('.sei-centro', 'text-align:center');
+    aplicar('.sei-meio', 'vertical-align:middle');
+    aplicar('th.sei-mes', 'font-weight:normal');
+    aplicar('table.sei-pca', 'margin:8px auto');
+    aplicar('td.sei-pca-celula', "font-family:'Times New Roman', Times, serif;font-size:12pt;font-weight:bold");
 
     // border="1" como reforço: se o SEI higienizar os atributos style, as
     // tabelas ainda saem com borda em vez de virar texto corrido.
@@ -150,9 +155,9 @@ const SeiBridge = (function () {
     // Roman), não a Calibri do documento gerado (achado do usuário,
     // 2026-08-13). Um <div> envolvendo tudo resolve: filhos herdam
     // font-family/font-size/color por CSS normal, e as células de tabela
-    // continuam com o próprio font-size (10.5pt) por cima, como já era.
+    // continuam com o próprio font-size (11pt) por cima, como já era.
     const envoltorio = doc.createElement('div');
-    envoltorio.setAttribute('style', 'font-family:Calibri, Arial, sans-serif;font-size:11pt;color:#000');
+    envoltorio.setAttribute('style', 'font-family:Calibri, Arial, sans-serif;font-size:12pt;color:#000');
     while (corpo.firstChild) envoltorio.appendChild(corpo.firstChild);
     return envoltorio.outerHTML;
   }
