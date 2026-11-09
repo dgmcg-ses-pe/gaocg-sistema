@@ -403,20 +403,30 @@ const TelaRecibos = (function () {
    * lido dos filtros Competência e Ano da tela, os mesmos que o backend usou
    * para somar total_pago_periodo.
    */
+  function periodoFiltrado_() {
+    return { competencias: UI.valoresFiltroMultiplo('recFiltroCompetencia'), anos: UI.valoresFiltroMultiplo('recFiltroAno') };
+  }
+
   function descricaoPeriodoFiltrado_() {
-    const competencias = UI.valoresFiltroMultiplo('recFiltroCompetencia');
-    const anos = UI.valoresFiltroMultiplo('recFiltroAno');
+    const { competencias, anos } = periodoFiltrado_();
     const partes = [];
     if (competencias.length) partes.push(competencias.length <= 3 ? competencias.join(', ') : `${competencias.length} competências`);
     if (anos.length) partes.push((anos.length === 1 ? 'Ano ' : 'Anos ') + anos.join(', '));
-    return partes.length ? partes.join(' · ') : 'Todas as competências';
+    return partes.length ? partes.join(' · ') : `Ano ${new Date().getFullYear()} (sem filtro de período)`;
   }
 
   function renderIndicadores(indicadores) {
-    // Backend antigo (sem total_pago_periodo) continua com o card anual.
+    // Sem filtro de Competência nem de Ano (pedido do usuário, 2026-11-09), o
+    // período padrão é o ano atual: vale total_pago_ano, que o backend já soma
+    // só com as competências do ano corrente. Com filtro de período, vale
+    // total_pago_periodo. Backend antigo (sem total_pago_periodo) continua
+    // com o card anual.
     const temPeriodo = indicadores.total_pago_periodo !== undefined;
+    const { competencias, anos } = periodoFiltrado_();
+    const semFiltroPeriodo = !competencias.length && !anos.length;
+    const valorPago = semFiltroPeriodo ? indicadores.total_pago_ano : indicadores.total_pago_periodo;
     const cartaoPago = temPeriodo
-      ? `<div class="cartao-indicador" title="Soma do Valor Pago dos recibos que atendem aos filtros da tela"><div class="valor">${UI.formatarMoeda(indicadores.total_pago_periodo)}</div><div class="rotulo">Total pago no período</div><div class="cartao-indicador-delta">${UI.escaparHtml(descricaoPeriodoFiltrado_())}</div></div>`
+      ? `<div class="cartao-indicador" title="Soma do Valor Pago dos recibos que atendem aos filtros da tela${semFiltroPeriodo ? ', com competência no ano atual' : ''}"><div class="valor">${UI.formatarMoeda(valorPago)}</div><div class="rotulo">Total pago no período</div><div class="cartao-indicador-delta">${UI.escaparHtml(descricaoPeriodoFiltrado_())}</div></div>`
       : `<div class="cartao-indicador"><div class="valor">${UI.formatarMoeda(indicadores.total_pago_ano)}</div><div class="rotulo">Total pago no ano</div></div>`;
     document.getElementById('recIndicadores').innerHTML = `
       <div class="cartao-indicador"><div class="valor">${indicadores.pendentes}</div><div class="rotulo">Pendentes (status ≠ PAGO)</div></div>

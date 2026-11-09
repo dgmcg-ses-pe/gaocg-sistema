@@ -3208,6 +3208,11 @@ Pedido do usuário: trocar o rótulo "Total pago no ano" por "Total pago no per�
 
 **Testado:** `filtrarLinhasRecibos_` + `calcularIndicadoresRecibos_` reais em Node (dez.25: antes 0, agora o pago; nov.26: igual ao anual; sem filtro: soma tudo; "Total a pagar" inalterado) e o card na tela de Recibos em localhost com dados simulados. **Não testado:** dados reais.
 
+**Ajustes seguintes (mesma sessão, só frontend):**
+- **Sem filtro de período o padrão é o ano atual** (pedido do usuário): sem Competência nem Ano filtrados, o card "Total pago no período" mostra `total_pago_ano` (competências do ano corrente, com os demais filtros), com a legenda "Ano 2026 (sem filtro de período)". Com filtro de período continua `total_pago_periodo`.
+- **Card "Atendido do total solicitado" em 0% com valor atendido:** o código estava certo; o total solicitado de R$ 18,5 bi vinha de uma SOF de teste ainda ativa na planilha: **SOF-000023** (Nº 36/2026, unidade HTRI, contrato "TESTE/2026", CNPJ 11.222.333/0001-81), com uma fonte "PÉ DIABÉTICO" de total solicitado R$ 18.478.488.634 (parcela R$ 6.521.819.518). As cópias SOF-000024 e SOF-000028 já estavam excluídas. Sem ela, o solicitado das SOFs ativas fica em ~R$ 17,3 mi e o card mostraria ~75%. **Pendente com o usuário:** excluir a SOF-000023 pelo app (não mexi em dados de produção). No código, o card passa a mostrar "<1%" quando há valor atendido e a porcentagem arredonda para 0.
+- **Testado:** no app em localhost com dados simulados (atendido "<1%" com o dado de teste, 75% sem ele; card de Recibos com filtro do mês e sem filtro de período).
+
 ## Referências úteis
 - Repositório: `https://github.com/AndersonG2021/APP-GAOCG.git`, branch `main`, publicado via GitHub Pages.
 - Backend roda só no Apps Script; **sempre que um `.gs` mudar, colar manualmente, reimplantar (Implantar → Gerenciar implantações → editar → Nova versão) E atualizar a cópia correspondente em `/backend` neste repositório**, no mesmo commit.

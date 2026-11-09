@@ -145,6 +145,11 @@ const Dashboard = (function () {
     const solicitado = (atendido && atendido.total_solicitado) || 0;
     const empenhado = (atendido && atendido.total_empenhado) || 0;
     const percentualAtendido = solicitado > 0 ? Math.round((empenhado / solicitado) * 100) : null;
+    // Há valor atendido mas a fração arredonda para 0 (ex.: 0,07%): mostra
+    // "<1%" em vez de "0%", que parecia dizer que nada foi atendido (relato
+    // do usuário, 2026-11-09).
+    const textoPercentual = percentualAtendido === null ? '—'
+      : (percentualAtendido === 0 && empenhado > 0 ? '<1%' : percentualAtendido + '%');
     const faltaAtender = Math.max(solicitado - empenhado, 0);
     const atendidoDeltaHtml = `
       <div class="cartao-indicador-barra"><div class="cartao-indicador-barra-preenchimento" style="width:${Math.min(percentualAtendido || 0, 100)}%"></div></div>
@@ -154,7 +159,7 @@ const Dashboard = (function () {
     document.getElementById('dashConteudo').innerHTML = `
       <div class="grade-indicadores grade-indicadores-3">
         ${cartaoIndicadorHtml_('dashCardRecibos', ICONE_RECIBO, r.total_recibos, `Recibos na competência ${UI.escaparHtml(r.competencia)}`, compRecibosHtml + deltaVsMesHtml, 'azul')}
-        ${cartaoIndicadorHtml_('dashCardAtendido', ICONE_CIFRAO, percentualAtendido === null ? '—' : percentualAtendido + '%', 'Atendido do total solicitado', atendidoDeltaHtml, 'verde', false)}
+        ${cartaoIndicadorHtml_('dashCardAtendido', ICONE_CIFRAO, UI.escaparHtml(textoPercentual), 'Atendido do total solicitado', atendidoDeltaHtml, 'verde', false)}
         ${cartaoSaldoBaixoHtml_(ne)}
         ${cartaoSaldoNeHtml_(ne)}
         ${cartaoIndicadorHtml_('dashCardUnidades', ICONE_PREDIO, UI.formatarMoeda(uni.total_mensal_comprometido), 'Total mensal comprometido (Unidades ativas)', `<div class="cartao-indicador-delta">${uni.total_unidades_ativas} unidade(s) ativa(s)</div>`, 'ciano')}
