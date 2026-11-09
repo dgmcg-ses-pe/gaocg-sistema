@@ -3197,14 +3197,14 @@ Pedidos do usuário: (1) no modo escuro o texto das sugestões ficava ilegível;
 
 **Testado:** `Sugestoes.gs` real em Node com Drive, planilha e e-mail simulados (20 casos: com e sem foto, cabeçalho antigo, pasta reaproveitada, limites, PDF, base64 inválido, falha no meio do upload, permissões de autor/Administrador/outro, foto de outra sugestão). App em localhost com `fetch` simulado: indicador no card, miniaturas no detalhe (incluindo foto que falha), anexar pelo botão, PDF recusado, colar print, remover, limite de 5, conteúdo enviado (JPEG 3000x2000 reduzido para 1600x1067; PNG mantido). **Não testado:** Drive, e-mail e Apps Script reais.
 
-## Recibos: "Total pago no período" (sessão 2026-11-09, ⚠️ backend pendente de implantar, frontend pendente de publicar)
+## Recibos: "Total pago no período" (sessão 2026-11-09, backend `fba1471` implantado via clasp na versão 114, para voltar reimplantar a 113; frontend publicado)
 
 Pedido do usuário: trocar o rótulo "Total pago no ano" por "Total pago no período", para refletir o período selecionado.
 
 - **Achado:** só trocar o texto deixaria o card errado. `calcularIndicadoresRecibos_` (`Recibos.gs`) somava `valor_pago` apenas das linhas filtradas com competência do ano atual; filtrando dez.25 ou o ano de 2025, o card mostrava R$ 0,00.
 - **Backend:** novo `total_pago_periodo` = soma de `valor_pago` de todas as linhas filtradas (competência, ano e demais filtros da tela). `total_pago_ano` continua igual, porque é a base do "Total a pagar no ano".
 - **Frontend (`js/recibos.js`):** card "Total pago no período" com o período abaixo do rótulo (as competências filtradas, "N competências", "Ano 2025" ou "Todas as competências"). Com o backend antigo (sem o campo) o card continua "Total pago no ano".
-- **Implantar o backend antes de publicar o frontend.**
+- **Publicação:** backend implantado antes do frontend.
 
 **Testado:** `filtrarLinhasRecibos_` + `calcularIndicadoresRecibos_` reais em Node (dez.25: antes 0, agora o pago; nov.26: igual ao anual; sem filtro: soma tudo; "Total a pagar" inalterado) e o card na tela de Recibos em localhost com dados simulados. **Não testado:** dados reais.
 
