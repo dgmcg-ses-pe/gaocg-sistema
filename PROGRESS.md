@@ -3214,6 +3214,15 @@ Pedido do usuário: trocar o rótulo "Total pago no ano" por "Total pago no per�
 - **Card "Atendido do total solicitado" em 0% com valor atendido:** o código estava certo; o total solicitado de R$ 18,5 bi vinha de uma SOF de teste ainda ativa na planilha: **SOF-000023** (Nº 36/2026, unidade HTRI, contrato "TESTE/2026", CNPJ 11.222.333/0001-81), com uma fonte "PÉ DIABÉTICO" de total solicitado R$ 18.478.488.634 (parcela R$ 6.521.819.518). As cópias SOF-000024 e SOF-000028 já estavam excluídas. Sem ela, o solicitado das SOFs ativas fica em ~R$ 17,3 mi e o card mostraria ~75%. **Pendente com o usuário:** excluir a SOF-000023 pelo app (não mexi em dados de produção). No código, o card passa a mostrar "<1%" quando há valor atendido e a porcentagem arredonda para 0.
 - **Testado:** no app em localhost com dados simulados (atendido "<1%" com o dado de teste, 75% sem ele; card de Recibos com filtro do mês e sem filtro de período).
 
+## Log de Auditoria: nome do usuário (sessão 2026-11-09, ⚠️ backend pendente de implantar, frontend pendente de publicar)
+
+Pedido do usuário: mostrar o nome do usuário em vez do código na coluna Usuário.
+
+- **Backend (`LogAuditoria.gs`):** `listarLogAuditoria` acrescenta `usuario_nome` aos itens da página, lido da aba Usuarios. Feito no backend porque `listarUsuarios` exige Gerente (Analista não pode chamar) e esconde o Administrador dos Gerentes. Observação: o Gerente passa a ver o nome do Administrador nas linhas dele; o perfil "(administrador)" já aparecia antes.
+- **Frontend (`js/log-auditoria.js`):** mostra "Nome (perfil)", com o código no `title`. Id sem cadastro (ex.: `rotina_importacao_inicial`) ou backend antigo: mostra o código como antes.
+
+**Testado:** `listarLogAuditoria` real em Node (Gerente vê nomes de todos, Analista só o próprio, id sem cadastro sem nome) e a tabela no app em localhost com dados simulados. **Não testado:** dados reais.
+
 ## Referências úteis
 - Repositório: `https://github.com/AndersonG2021/APP-GAOCG.git`, branch `main`, publicado via GitHub Pages.
 - Backend roda só no Apps Script; **sempre que um `.gs` mudar, colar manualmente, reimplantar (Implantar → Gerenciar implantações → editar → Nova versão) E atualizar a cópia correspondente em `/backend` neste repositório**, no mesmo commit.

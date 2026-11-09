@@ -58,7 +58,7 @@ const TelaLogAuditoria = (function () {
         <tbody>${itens.map(l => `
           <tr>
             <td>${UI.formatarData(l.data_hora)}</td>
-            <td>${UI.escaparHtml(l.usuario_id)} (${UI.escaparHtml(l.perfil_usuario)})</td>
+            <td title="${UI.escaparHtml(l.usuario_id)}">${UI.escaparHtml(l.usuario_nome || l.usuario_id)}${l.perfil_usuario ? ` (${UI.escaparHtml(l.perfil_usuario)})` : ''}</td>
             <td>${UI.escaparHtml(l.tipo_processo)} ${UI.escaparHtml(l.processo_id)}</td>
             <td>${UI.escaparHtml(l.campo_alterado)}</td>
             <td>${UI.escaparHtml(l.valor_anterior)}</td>
