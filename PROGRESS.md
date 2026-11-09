@@ -3152,14 +3152,14 @@ Relato do usuário (UPA Barra de Jangada): (1) a NE da SOF de janeiro (2026NE000
 
 **Testado:** `NotasEmpenho.gs` real em Node com abas simuladas: código antigo reproduz os dois sintomas; código novo mostra as duas NEs e marca a 759 como concluída, sem alerta. **Não testado:** Apps Script real e planilha real.
 
-## Recibo excluído deixa de contar como liquidado na NE (sessão 2026-11-09, backend `c151f52`, ⚠️ pendente de implantar)
+## Recibo excluído deixa de contar como liquidado na NE (sessão 2026-11-09, backend `c151f52`, implantado via clasp na versão 111; para voltar, reimplantar a 110)
 
 Achado ao revisar a regra de NE concluída: `valorLiquidadoAgrupadoPorNe_` (`NotasEmpenho.gs`) somava `valor_liquidado` de todos os Recibos, inclusive os excluídos (exclusão lógica, `excluido = true`). Um Recibo liquidado e depois excluído continuava abatendo o saldo da NE, podendo marcá-la como "Concluída" ou mostrar saldo menor que o real. As outras leituras de Recibos (Dashboard, relatórios, listagem, `recibosPorNeECompetencia_`) já filtravam.
 
 - **Correção:** a função ignora Recibos com `excluido`. Só `NotasEmpenho.gs` mudou; nada de frontend ou planilha.
-- **Efeito esperado após implantar:** NEs com Recibo liquidado excluído passam a mostrar saldo maior, podem perder o selo "Concluída" e podem voltar a ter alerta.
+- **Efeito esperado em produção:** NEs com Recibo liquidado excluído passam a mostrar saldo maior, podem perder o selo "Concluída" e podem voltar a ter alerta.
 
-**Testado:** `valorLiquidadoAgrupadoPorNe_` real em Node com Recibos simulados (`excluido` como `true`, `'TRUE'`, `false` e vazio). **Não testado:** Apps Script real. Não foi medido quantos Recibos excluídos têm `valor_liquidado` preenchido na planilha.
+**Testado:** `valorLiquidadoAgrupadoPorNe_` real em Node com Recibos simulados (`excluido` como `true`, `'TRUE'`, `false` e vazio). Após implantar: código do Apps Script conferido igual ao local e URL de produção respondendo (HTTP 200). **Não testado:** tela de Notas de Empenho com dados reais. Não foi medido quantos Recibos excluídos têm `valor_liquidado` preenchido na planilha.
 
 ## Referências úteis
 - Repositório: `https://github.com/AndersonG2021/APP-GAOCG.git`, branch `main`, publicado via GitHub Pages.
