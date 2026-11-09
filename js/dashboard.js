@@ -472,7 +472,7 @@ const Dashboard = (function () {
             <select id="dashMetasFiltroEstado">
               <option value="">Todos</option>
               <option value="chegado">Recebido</option>
-              <option value="falta">Falta</option>
+              <option value="falta">Não recebido</option>
             </select>
           </div>
           <span style="flex:1"></span>
@@ -557,6 +557,23 @@ const Dashboard = (function () {
     return `<span class="etapa-meta" title="${titulo}">${ICONE_ETAPA_[estado]}${contagem}</span>`;
   }
 
+  /**
+   * Coluna "Recebido" do painel "Processos do mês" (sessão 2026-11-09, pedido
+   * do usuário: substitui as colunas Esperado e Falta). Sim (verde) quando
+   * chegou tudo o que a meta espera; Não (vermelho) quando não chegou nada.
+   * Meta com mais de um processo e só parte recebida mostra "1 de 2" em
+   * amarelo, pra não esconder o que ainda falta.
+   */
+  function recebidoMetaHtml_(it) {
+    const esperado = Number(it.esperado) || 0, chegado = Number(it.chegado) || 0;
+    if (chegado >= esperado && chegado > 0) {
+      const extra = it.excedente > 0 ? ` title="Recebido(s) ${chegado}, esperado(s) ${esperado}"` : '';
+      return `<span class="selo verde"${extra}>Sim</span>`;
+    }
+    if (!chegado) return '<span class="selo vermelho">Não</span>';
+    return `<span class="selo amarelo" title="Recebido(s) ${chegado} de ${esperado} esperado(s)">${chegado} de ${esperado}</span>`;
+  }
+
   /** Filtra metasItensAtuais_ em memória (sem chamada ao backend) e redesenha só a tabela. */
   function renderTabelaMetas_() {
     const alvo = document.getElementById('dashMetasTabela');
@@ -591,20 +608,14 @@ const Dashboard = (function () {
         <span>${ICONE_ETAPA_.ausente} processo ainda não recebido</span>
       </p>
       <table class="tabela">
-        <thead><tr><th>Unidade</th><th>Objeto</th><th>Esperado</th><th>Recebido</th><th>Liquidado</th><th>Pago</th><th>Falta</th></tr></thead>
+        <thead><tr><th>Unidade</th><th>Objeto</th><th>Liquidado</th><th>Pago</th><th>Recebido</th></tr></thead>
         <tbody>${itens.map(it => `
           <tr data-unidade="${it.unidade_id}" data-objeto="${UI.escaparHtml(it.objeto)}">
             <td>${UI.escaparHtml(it.unidade_nome)}</td>
             <td>${UI.escaparHtml(it.objeto)}</td>
-            <td>${it.esperado}</td>
-            <td>${it.chegado}</td>
             <td>${etapaMetaHtml_(it, it.liquidado, 'liquidado')}</td>
             <td>${etapaMetaHtml_(it, it.pago, 'pago')}</td>
-            <td>${it.excedente > 0
-              ? `<span class="selo azul">excedente +${it.excedente}</span>`
-              : it.falta > 0
-                ? `<span class="selo vermelho">falta ${it.falta}</span>`
-                : '<span class="selo verde">completo</span>'}</td>
+            <td>${recebidoMetaHtml_(it)}</td>
           </tr>`).join('')}
         </tbody>
       </table>`;
