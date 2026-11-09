@@ -3133,6 +3133,25 @@ Pedido do usuário: no formulário de Recibo (novo e edição) a NE não é mais
 
 **Testado:** app real em localhost com `Api.chamar` simulada e `fetch` ao Apps Script bloqueado: criar, editar, trocar objeto, objeto sem NE, NE antiga (manter, trocar, remover), NE injetada no DOM recusada, corrida entre unidades, falha de carga, parcela dividida, anexo. `Recibos.gs` real executado no navegador com planilha simulada: casos inválidos recusados antes de qualquer escrita, válidos chegando à escrita. **Não testado:** Apps Script real e dados reais. Não foi medido quantas NEs antigas têm `objeto` vazio na planilha; essas nunca aparecem na lista até serem corrigidas. **Follow-up conhecido, não alterado:** LE/OB validada por OCR contra uma NE continua no formulário se a NE mudar depois.
 
+## NE concluída e NEs que sumiam da tela de Notas de Empenho (sessão 2026-11-08, frontend publicado, backend implantado na versão 110)
+
+> **Nota de 2026-11-09:** esta seção veio de uma sessão na nuvem (branch `claude/elegant-thompson-f0n8xo`) que propôs uma versão própria de `NotasEmpenho.gs`/`Dashboard.gs`. O que foi implantado na versão 110 é outra implementação, do commit `d84d795` do backend, e só mexe em `NotasEmpenho.gs`:
+> - `concluida = neConcluida_(total solicitado, falta atender, saldo)`: total solicitado > 0, falta atender <= 0,005 e saldo <= 0,005.
+> - `alerta` (`saldoAbaixoDaParcela_`) passa a exigir **falta atender > 0**. Por isso o caso "tudo atendido, saldo > 0 mas menor que a parcela" **não** tem mais alerta, ao contrário do que diz o último item abaixo.
+> - `grupoNeComSaldoBaixo_` recalcula pela mesma regra (com `falta_atendido`), sem ler o `alerta` do grupo. `Dashboard.gs` não mudou.
+> - A correção da causa (2) (linhas de SOF excluído saem antes de agrupar, `sof_id` do grupo vem da linha original) é a mesma.
+>
+> Os itens abaixo descrevem a proposta da sessão na nuvem, mantidos como registro do diagnóstico.
+
+Relato do usuário (UPA Barra de Jangada): (1) a NE da SOF de janeiro (2026NE000759), com o solicitado todo atendido e todo liquidado, aparecia como "Saldo abaixo da parcela" com saldo R$ 0,00; (2) as NEs 2026NE000430/431, lançadas na SOF de fevereiro a dezembro, aparecem dentro da SOF mas não na tela de Notas de Empenho.
+
+- **Causa (2):** `montarGruposNotasEmpenho_` agrupa por `numero_ne` e só depois descarta o grupo cujo SOF está excluído, usando o `sof_id` da **primeira** linha encontrada. Excluir um SOF não exclui as NEs dele. Se o mesmo número já tinha sido lançado num SOF depois excluído, essa linha antiga vinha primeiro e o card inteiro sumia, levando junto a NE nova do SOF ativo. Hipótese reproduzida com dados simulados; não conferida na planilha real. **Correção:** linhas de SOF excluído/inexistente saem antes do agrupamento, e o `sof_id` do grupo passa a vir da linha original.
+- **Causa (1) e regra nova:** `concluida = total solicitado > 0 && falta ser atendido <= 0 && saldo atual = 0` (tolerância de 0,005; saldo negativo não conta). NE concluída nunca dispara `alerta`. `grupoNeComSaldoBaixo_` passa a devolver o `alerta` já calculado, para filtro, relatório e Dashboard não divergirem. No Dashboard, NE concluída não conta como "sem saldo".
+- **`js/notas-empenho.js`:** selo verde "Concluída" no topo do card (só aparece com o backend novo).
+- Caso não coberto, de propósito: tudo atendido, saldo > 0 mas menor que a parcela continua com alerta.
+
+**Testado:** `NotasEmpenho.gs` real em Node com abas simuladas: código antigo reproduz os dois sintomas; código novo mostra as duas NEs e marca a 759 como concluída, sem alerta. **Não testado:** Apps Script real e planilha real.
+
 ## Referências úteis
 - Repositório: `https://github.com/AndersonG2021/APP-GAOCG.git`, branch `main`, publicado via GitHub Pages.
 - Backend roda só no Apps Script; **sempre que um `.gs` mudar, colar manualmente, reimplantar (Implantar → Gerenciar implantações → editar → Nova versão) E atualizar a cópia correspondente em `/backend` neste repositório**, no mesmo commit.

@@ -423,7 +423,7 @@ const TelaNotasEmpenho = (function () {
           ${modoSelecaoLote ? `<input type="checkbox" class="checkbox-selecao-lote" data-numero="${UI.escaparHtml(g.numero_ne)}" ${numerosNeSelecionados_.has(g.numero_ne) ? 'checked' : ''} title="Selecionar para excluir" />` : ''}
           <span class="cartao-ne-meta">${ICONE_PASTA} ${UI.escaparHtml(g.objeto || '-')} · SOF ${UI.escaparHtml(g.sof_numero || '-')}</span>
           ${g.alerta ? '<span class="selo vermelho">Saldo abaixo da parcela</span>' : ''}
-          ${g.concluida ? '<span class="selo verde" title="Todo o valor solicitado foi atendido e já foi liquidado">Concluída</span>' : ''}
+          ${g.concluida ? '<span class="selo verde" title="Todo o solicitado foi atendido e todo o atendido já foi liquidado">Concluída</span>' : ''}
         </div>
         <h3 class="cartao-ne-numero">${UI.escaparHtml(g.numero_ne)}</h3>
         <p class="cartao-ne-unidade">${UI.escaparHtml(g.unidade_nome || '-')}</p>
