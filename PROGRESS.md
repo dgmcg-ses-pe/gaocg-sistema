@@ -3177,7 +3177,7 @@ Pedidos do usuário: (1) a NE concluída aparecia como "1 sem saldo" no card "Sa
 
 **Testado:** `dashboardNotasEmpenho_` real em Node com grupos simulados (concluída fora, esgotadas não concluídas dentro). App real em localhost com `fetch` simulado e chamadas ao Apps Script bloqueadas: abrir/fechar o painel, os 4 filtros de Situação, filtro de Unidade com total, limpar filtro, nome com HTML escapado, clique na NE abrindo Notas de Empenho com a busca e página 1, largura de celular (tabela rola dentro do painel, sem rolagem lateral da página). **Não testado:** dados reais.
 
-## Sugestões: contraste no modo escuro e fotos anexadas (sessão 2026-11-09, ⚠️ backend pendente de implantar, frontend pendente de publicar)
+## Sugestões: contraste no modo escuro e fotos anexadas (sessão 2026-11-09, backend `b2bf93f` implantado via clasp na versão 113, para voltar reimplantar a 112; frontend publicado)
 
 Pedidos do usuário: (1) no modo escuro o texto das sugestões ficava ilegível; (2) poder anexar fotos ao fazer uma sugestão.
 
