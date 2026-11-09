@@ -35,7 +35,8 @@ const TelaNotasEmpenho = (function () {
    * opts (opcional, vindo do Dashboard via App.navegarPara): `saldoBaixo: true`
    * já marca o filtro "Somente saldo abaixo da parcela" antes da primeira
    * carga (link "Ver na tela de Notas de Empenho" do painel "NEs com saldo
-   * abaixo da parcela" do Dashboard).
+   * abaixo da parcela" do Dashboard). `busca: '<nº da NE>'` preenche a busca
+   * livre (painel "Saldo das Notas de Empenho" do Dashboard).
    */
   async function render(opts) {
     // Sai do modo de seleção em lote sempre que a tela é (re)aberta - ver
@@ -114,6 +115,12 @@ const TelaNotasEmpenho = (function () {
     UI.criarFiltroMultiplo('neFiltroCompetencia', UI.listaCompetencias(), null, aplicarFiltros_);
     document.getElementById('neFiltroSaldoBaixo').addEventListener('change', aplicarFiltros_);
     if (opts && opts.saldoBaixo) document.getElementById('neFiltroSaldoBaixo').checked = true;
+    // busca (sessão 2026-11-09): linha do painel "Saldo das Notas de Empenho"
+    // do Dashboard abre a tela já buscando pelo número da NE clicada.
+    if (opts && opts.busca) document.getElementById('neBusca').value = String(opts.busca);
+    // Filtro vindo do Dashboard começa na página 1 (paginaAtual sobrevive entre
+    // visitas à tela e deixaria a busca numa página vazia).
+    if (opts && (opts.busca || opts.saldoBaixo)) paginaAtual = 1;
     await carregar();
   }
 

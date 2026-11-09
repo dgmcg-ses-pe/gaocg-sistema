@@ -638,6 +638,9 @@ table.tabela tbody tr.linha-sem-processo:hover { background: #fef3c7; }
 .dash-painel-cabecalho a:hover { text-decoration: underline; }
 /* Painel "NEs com saldo abaixo da parcela" (sessão 2026-09-01) - table.tabela tbody tr:hover acima já dá o cursor/hover da linha clicável. */
 #dashSaldoBaixoTabela strong.vermelho { color: var(--vermelho); }
+/* Painel "Saldo das Notas de Empenho" (sessão 2026-11-09). */
+#dashSaldoNeTabela strong.vermelho { color: var(--vermelho); }
+#dashSaldoNeTabela tfoot td { border-top: 2px solid var(--cinza-300); }
 .dash-lista { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .dash-item-lista { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 8px; cursor: pointer; }
 .dash-item-lista:hover { background: var(--cinza-100); }

@@ -41,6 +41,11 @@ const Dashboard = (function () {
   // filtrado por `alerta` na hora de montar a tabela, sem round-trip extra.
   let saldoBaixoItensAtuais_ = [];
   let saldoBaixoAbertoAtual_ = false;
+  // Painel "Saldo das Notas de Empenho" (sessão 2026-11-09, pedido do
+  // usuário) - aberto pelo card "Saldo disponível em Notas de Empenho". Usa
+  // todos os `dados.notas_empenho.itens`, filtrados em memória.
+  let saldoNeItensAtuais_ = [];
+  let saldoNeAbertoAtual_ = false;
 
   async function carregarMapaUsuarios_() {
     try {
@@ -151,12 +156,13 @@ const Dashboard = (function () {
         ${cartaoIndicadorHtml_('dashCardRecibos', ICONE_RECIBO, r.total_recibos, `Recibos na competência ${UI.escaparHtml(r.competencia)}`, compRecibosHtml + deltaVsMesHtml, 'azul')}
         ${cartaoIndicadorHtml_('dashCardAtendido', ICONE_CIFRAO, percentualAtendido === null ? '—' : percentualAtendido + '%', 'Atendido do total solicitado', atendidoDeltaHtml, 'verde', false)}
         ${cartaoSaldoBaixoHtml_(ne)}
-        ${cartaoIndicadorHtml_('dashCardSaldoNe', ICONE_ALERTA, UI.formatarMoeda(ne.saldo_disponivel), 'Saldo disponível em Notas de Empenho', ne.total_sem_saldo > 0 ? `<div class="cartao-indicador-delta negativo">${ne.total_sem_saldo} sem saldo</div>` : '', 'vermelho')}
+        ${cartaoSaldoNeHtml_(ne)}
         ${cartaoIndicadorHtml_('dashCardUnidades', ICONE_PREDIO, UI.formatarMoeda(uni.total_mensal_comprometido), 'Total mensal comprometido (Unidades ativas)', `<div class="cartao-indicador-delta">${uni.total_unidades_ativas} unidade(s) ativa(s)</div>`, 'ciano')}
         ${cartaoMetasHtml_(metas)}
       </div>
 
       ${painelSaldoBaixoHtml_()}
+      ${painelSaldoNeHtml_()}
       ${painelMetasDetalheHtml_()}
       ${painelGraficosHtml_()}
       ${painelPrazosHtml_()}`;
@@ -167,10 +173,11 @@ const Dashboard = (function () {
     // Card 2 (Atendido x Solicitado) é só informativo - sem clique.
     // Card 3 (NEs com saldo abaixo da parcela): não navega mais - expande o
     // painel no próprio Dashboard, ver configurarPainelSaldoBaixo_ abaixo.
-    document.getElementById('dashCardSaldoNe').addEventListener('click', () => App.navegarPara('notasEmpenho'));
+    // Card 4 (Saldo disponível em NE): idem, ver configurarPainelSaldoNe_.
     document.getElementById('dashCardUnidades').addEventListener('click', () => App.navegarPara('unidades'));
 
     configurarPainelSaldoBaixo_(ne);
+    configurarPainelSaldoNe_(ne);
     configurarPainelMetas_(metas);
     configurarGraficos_();
     carregarPrazosContratuais_();
@@ -255,6 +262,167 @@ const Dashboard = (function () {
       </table>`;
     alvo.querySelectorAll('tr[data-numero]').forEach(tr => {
       tr.addEventListener('click', () => App.navegarPara('notasEmpenho', { saldoBaixo: true }));
+    });
+  }
+
+  // ===== Card "Saldo disponível em Notas de Empenho" (sessão 2026-11-09,
+  // pedido do usuário) - antes navegava direto pra tela de Notas de Empenho;
+  // agora expande no próprio Dashboard a lista de todas as NEs com Unidade,
+  // Objeto e saldo. Clicar numa NE abre a tela de Notas de Empenho já com a
+  // busca pelo número dela.
+  function cartaoSaldoNeHtml_(ne) {
+    const semSaldoHtml = ne.total_sem_saldo > 0
+      ? `<div class="cartao-indicador-delta negativo">${ne.total_sem_saldo} sem saldo</div>`
+      : '<div class="cartao-indicador-delta">Clique para ver o saldo de cada NE</div>';
+    return `
+      <div class="cartao-indicador clicavel acento-vermelho" id="dashCardSaldoNe">
+        <div class="cartao-indicador-topo">
+          <span class="cartao-indicador-icone vermelho">${ICONE_ALERTA}</span>
+          <span class="cartao-indicador-seta" id="dashSaldoNeChevron">${ICONE_CHEVRON}</span>
+        </div>
+        <div class="valor">${UI.formatarMoeda(ne.saldo_disponivel)}</div>
+        <div class="rotulo">Saldo disponível em Notas de Empenho</div>
+        ${semSaldoHtml}
+      </div>`;
+  }
+
+  function painelSaldoNeHtml_() {
+    return `
+      <div class="painel oculto" id="dashSaldoNeDetalhe">
+        <div class="dash-painel-cabecalho">
+          <h3>Saldo das Notas de Empenho</h3>
+          <a href="#" id="dashSaldoNeVerTodas">Ver na tela de Notas de Empenho →</a>
+        </div>
+        <div class="barra-filtros">
+          <div class="campo campo-filtro-multiplo"><label style="width:100%">Unidade</label>
+            <div id="dashSaldoNeFiltroUnidade"></div><button type="button" class="filtro-multiplo-x" data-alvo="dashSaldoNeFiltroUnidade" title="Limpar filtro de Unidade">&times;</button>
+          </div>
+          <div class="campo campo-filtro-multiplo"><label style="width:100%">Objeto</label>
+            <div id="dashSaldoNeFiltroObjeto"></div><button type="button" class="filtro-multiplo-x" data-alvo="dashSaldoNeFiltroObjeto" title="Limpar filtro de Objeto">&times;</button>
+          </div>
+          <div class="campo"><label>Situação</label>
+            <select id="dashSaldoNeFiltroSituacao">
+              <option value="">Todas</option>
+              <option value="com_saldo">Com saldo</option>
+              <option value="abaixo">Abaixo da parcela</option>
+              <option value="sem_saldo">Sem saldo</option>
+              <option value="concluida">Concluída</option>
+            </select>
+          </div>
+          <span style="flex:1"></span>
+          <span id="dashSaldoNeContagem" class="ajuda" style="align-self:center"></span>
+        </div>
+        <div id="dashSaldoNeTabela"></div>
+      </div>`;
+  }
+
+  /**
+   * Uma situação por NE, na ordem de prioridade: concluída (campo do backend,
+   * neConcluida_) > sem saldo (<= 0) > abaixo da parcela (`alerta`) > com saldo.
+   * Mesmo critério de "sem saldo" do card (dashboardNotasEmpenho_, Dashboard.gs).
+   */
+  function situacaoSaldoNe_(it) {
+    if (it.concluida) return 'concluida';
+    if (Number(it.saldo_atual) <= 0) return 'sem_saldo';
+    if (it.alerta) return 'abaixo';
+    return 'com_saldo';
+  }
+
+  const SELO_SITUACAO_NE_ = {
+    concluida: '<span class="selo verde">Concluída</span>',
+    sem_saldo: '<span class="selo vermelho">Sem saldo</span>',
+    abaixo: '<span class="selo vermelho">Abaixo da parcela</span>',
+    com_saldo: '<span class="selo azul">Com saldo</span>'
+  };
+
+  function configurarPainelSaldoNe_(ne) {
+    saldoNeItensAtuais_ = ne.itens || [];
+    const cardEl = document.getElementById('dashCardSaldoNe');
+    const detalheEl = document.getElementById('dashSaldoNeDetalhe');
+    const chevronEl = document.getElementById('dashSaldoNeChevron');
+    if (!cardEl || !detalheEl) return;
+
+    // Mesmo comportamento dos painéis de Saldo baixo e Metas: mantém aberto
+    // entre carregamentos só se o usuário não o fechou.
+    detalheEl.classList.toggle('oculto', !saldoNeAbertoAtual_);
+    chevronEl.classList.toggle('aberta', saldoNeAbertoAtual_);
+
+    cardEl.addEventListener('click', () => {
+      saldoNeAbertoAtual_ = detalheEl.classList.contains('oculto');
+      detalheEl.classList.toggle('oculto', !saldoNeAbertoAtual_);
+      chevronEl.classList.toggle('aberta', saldoNeAbertoAtual_);
+    });
+    document.getElementById('dashSaldoNeVerTodas').addEventListener('click', e => {
+      e.preventDefault();
+      App.navegarPara('notasEmpenho');
+    });
+
+    const unidadesOpcoes = [];
+    const unidadesVistas = new Set();
+    const objetosOpcoes = [];
+    const objetosVistos = new Set();
+    saldoNeItensAtuais_.forEach(it => {
+      const unidade = it.unidade_nome || '-';
+      if (!unidadesVistas.has(unidade)) { unidadesVistas.add(unidade); unidadesOpcoes.push(unidade); }
+      const objeto = it.objeto || '-';
+      if (!objetosVistos.has(objeto)) { objetosVistos.add(objeto); objetosOpcoes.push(objeto); }
+    });
+    unidadesOpcoes.sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    objetosOpcoes.sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    UI.criarFiltroMultiplo('dashSaldoNeFiltroUnidade', unidadesOpcoes, renderTabelaSaldoNe_);
+    UI.criarFiltroMultiplo('dashSaldoNeFiltroObjeto', objetosOpcoes, renderTabelaSaldoNe_);
+    UI.ligarLimpezaFiltros('#dashSaldoNeDetalhe', null, renderTabelaSaldoNe_);
+    document.getElementById('dashSaldoNeFiltroSituacao').addEventListener('change', renderTabelaSaldoNe_);
+
+    renderTabelaSaldoNe_();
+  }
+
+  /** Filtra saldoNeItensAtuais_ em memória e redesenha a tabela, ordenada por Unidade, Objeto e Nº da NE. */
+  function renderTabelaSaldoNe_() {
+    const alvo = document.getElementById('dashSaldoNeTabela');
+    if (!alvo) return;
+    const unidades = UI.valoresFiltroMultiplo('dashSaldoNeFiltroUnidade');
+    const objetos = UI.valoresFiltroMultiplo('dashSaldoNeFiltroObjeto');
+    const situacao = document.getElementById('dashSaldoNeFiltroSituacao').value;
+
+    const itens = saldoNeItensAtuais_
+      .filter(it => !unidades.length || unidades.indexOf(it.unidade_nome || '-') !== -1)
+      .filter(it => !objetos.length || objetos.indexOf(it.objeto || '-') !== -1)
+      .filter(it => !situacao || situacaoSaldoNe_(it) === situacao)
+      .slice()
+      .sort((a, b) => String(a.unidade_nome || '').localeCompare(String(b.unidade_nome || ''), 'pt-BR')
+        || String(a.objeto || '').localeCompare(String(b.objeto || ''), 'pt-BR')
+        || String(a.numero_ne).localeCompare(String(b.numero_ne)));
+
+    const contagemEl = document.getElementById('dashSaldoNeContagem');
+    if (contagemEl) contagemEl.textContent = `${itens.length} nota${itens.length === 1 ? '' : 's'} de empenho`;
+
+    if (!itens.length) {
+      alvo.innerHTML = '<p class="estado-vazio">Nenhuma Nota de Empenho para este filtro.</p>';
+      return;
+    }
+    const total = itens.reduce((soma, it) => soma + (Number(it.saldo_atual) || 0), 0);
+    alvo.innerHTML = `
+      <table class="tabela">
+        <thead><tr><th>Nº da NE</th><th>Unidade</th><th>Objeto</th><th>Fonte</th><th>Saldo</th><th>Situação</th></tr></thead>
+        <tbody>${itens.map(it => {
+          const sit = situacaoSaldoNe_(it);
+          const corSaldo = sit === 'sem_saldo' || sit === 'abaixo' ? 'vermelho' : '';
+          return `
+          <tr data-numero="${UI.escaparHtml(it.numero_ne)}" title="Abrir na tela de Notas de Empenho">
+            <td>${UI.escaparHtml(it.numero_ne)}</td>
+            <td>${UI.escaparHtml(it.unidade_nome || '-')}</td>
+            <td>${UI.escaparHtml(it.objeto || '-')}</td>
+            <td>${UI.escaparHtml(it.fonte || '-')}</td>
+            <td><strong class="${corSaldo}">${UI.formatarMoeda(it.saldo_atual)}</strong></td>
+            <td>${SELO_SITUACAO_NE_[sit]}</td>
+          </tr>`;
+        }).join('')}
+        </tbody>
+        <tfoot><tr><td colspan="4"><strong>Total</strong></td><td><strong>${UI.formatarMoeda(total)}</strong></td><td></td></tr></tfoot>
+      </table>`;
+    alvo.querySelectorAll('tr[data-numero]').forEach(tr => {
+      tr.addEventListener('click', () => App.navegarPara('notasEmpenho', { busca: tr.dataset.numero }));
     });
   }
 

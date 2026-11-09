@@ -3161,6 +3161,17 @@ Achado ao revisar a regra de NE concluída: `valorLiquidadoAgrupadoPorNe_` (`Not
 
 **Testado:** `valorLiquidadoAgrupadoPorNe_` real em Node com Recibos simulados (`excluido` como `true`, `'TRUE'`, `false` e vazio). Após implantar: código do Apps Script conferido igual ao local e URL de produção respondendo (HTTP 200). **Não testado:** tela de Notas de Empenho com dados reais. Não foi medido quantos Recibos excluídos têm `valor_liquidado` preenchido na planilha.
 
+## Dashboard: NE concluída fora do "sem saldo" e painel "Saldo das Notas de Empenho" (sessão 2026-11-09, ⚠️ backend `98dc1c4` pendente de implantar, frontend pendente de publicar)
+
+Pedidos do usuário: (1) a NE concluída aparecia como "1 sem saldo" no card "Saldo disponível em Notas de Empenho"; (2) clicar nesse card deve abrir uma seção como as outras, com o saldo de todas as NEs, Unidade e Objeto, e clicar numa NE deve levar à aba Notas de Empenho.
+
+- **`backend/Dashboard.gs` (`dashboardNotasEmpenho_`):** "sem saldo" agora é `valor_atual <= 0` **e não concluída**. NE esgotada que ainda tem falta a atender continua contando. O valor do saldo disponível não muda.
+- **`js/dashboard.js`:** o card deixou de navegar e passou a expandir/recolher o painel "Saldo das Notas de Empenho" (chevron, mesmo padrão dos cards "Saldo abaixo da parcela" e "Processos do mês"). Usa os `notas_empenho.itens` que já vinham no `obterDashboard`, sem chamada nova. Colunas: Nº da NE, Unidade, Objeto, Fonte, Saldo e Situação, com linha de total. Filtros em memória: Unidade, Objeto e Situação (Concluída > Sem saldo > Abaixo da parcela > Com saldo, nessa prioridade). Ordem: Unidade, Objeto, Nº da NE.
+- **`js/notas-empenho.js`:** `render(opts)` aceita `busca`, que preenche a busca livre. Clicar numa linha do painel abre a tela já buscando pelo número da NE. Com `busca` ou `saldoBaixo` a tela volta para a página 1 (antes `paginaAtual` sobrevivia entre visitas e podia mostrar uma página vazia).
+- **`css/style.css`:** cor do saldo negativo/abaixo e borda da linha de total.
+
+**Testado:** `dashboardNotasEmpenho_` real em Node com grupos simulados (concluída fora, esgotadas não concluídas dentro). App real em localhost com `fetch` simulado e chamadas ao Apps Script bloqueadas: abrir/fechar o painel, os 4 filtros de Situação, filtro de Unidade com total, limpar filtro, nome com HTML escapado, clique na NE abrindo Notas de Empenho com a busca e página 1, largura de celular (tabela rola dentro do painel, sem rolagem lateral da página). **Não testado:** dados reais.
+
 ## Referências úteis
 - Repositório: `https://github.com/AndersonG2021/APP-GAOCG.git`, branch `main`, publicado via GitHub Pages.
 - Backend roda só no Apps Script; **sempre que um `.gs` mudar, colar manualmente, reimplantar (Implantar → Gerenciar implantações → editar → Nova versão) E atualizar a cópia correspondente em `/backend` neste repositório**, no mesmo commit.
