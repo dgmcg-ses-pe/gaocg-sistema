@@ -3214,7 +3214,7 @@ Pedido do usuário: trocar o rótulo "Total pago no ano" por "Total pago no per�
 - **Card "Atendido do total solicitado" em 0% com valor atendido:** o código estava certo; o total solicitado de R$ 18,5 bi vinha de uma SOF de teste ainda ativa na planilha: **SOF-000023** (Nº 36/2026, unidade HTRI, contrato "TESTE/2026", CNPJ 11.222.333/0001-81), com uma fonte "PÉ DIABÉTICO" de total solicitado R$ 18.478.488.634 (parcela R$ 6.521.819.518). As cópias SOF-000024 e SOF-000028 já estavam excluídas. Sem ela, o solicitado das SOFs ativas fica em ~R$ 17,3 mi e o card mostraria ~75%. **Pendente com o usuário:** excluir a SOF-000023 pelo app (não mexi em dados de produção). No código, o card passa a mostrar "<1%" quando há valor atendido e a porcentagem arredonda para 0.
 - **Testado:** no app em localhost com dados simulados (atendido "<1%" com o dado de teste, 75% sem ele; card de Recibos com filtro do mês e sem filtro de período).
 
-## Log de Auditoria: nome do usuário (sessão 2026-11-09, ⚠️ backend pendente de implantar, frontend pendente de publicar)
+## Log de Auditoria: nome do usuário (sessão 2026-11-09, backend `d2d3afd` implantado via clasp na versão 115, para voltar reimplantar a 114; frontend publicado)
 
 Pedido do usuário: mostrar o nome do usuário em vez do código na coluna Usuário.
 
