@@ -398,10 +398,29 @@ const TelaRecibos = (function () {
     renderIndicadores(resposta.indicadores);
   }
 
+  /**
+   * Período que vale para o card "Total pago no período" (sessão 2026-11-09):
+   * lido dos filtros Competência e Ano da tela, os mesmos que o backend usou
+   * para somar total_pago_periodo.
+   */
+  function descricaoPeriodoFiltrado_() {
+    const competencias = UI.valoresFiltroMultiplo('recFiltroCompetencia');
+    const anos = UI.valoresFiltroMultiplo('recFiltroAno');
+    const partes = [];
+    if (competencias.length) partes.push(competencias.length <= 3 ? competencias.join(', ') : `${competencias.length} competências`);
+    if (anos.length) partes.push((anos.length === 1 ? 'Ano ' : 'Anos ') + anos.join(', '));
+    return partes.length ? partes.join(' · ') : 'Todas as competências';
+  }
+
   function renderIndicadores(indicadores) {
+    // Backend antigo (sem total_pago_periodo) continua com o card anual.
+    const temPeriodo = indicadores.total_pago_periodo !== undefined;
+    const cartaoPago = temPeriodo
+      ? `<div class="cartao-indicador" title="Soma do Valor Pago dos recibos que atendem aos filtros da tela"><div class="valor">${UI.formatarMoeda(indicadores.total_pago_periodo)}</div><div class="rotulo">Total pago no período</div><div class="cartao-indicador-delta">${UI.escaparHtml(descricaoPeriodoFiltrado_())}</div></div>`
+      : `<div class="cartao-indicador"><div class="valor">${UI.formatarMoeda(indicadores.total_pago_ano)}</div><div class="rotulo">Total pago no ano</div></div>`;
     document.getElementById('recIndicadores').innerHTML = `
       <div class="cartao-indicador"><div class="valor">${indicadores.pendentes}</div><div class="rotulo">Pendentes (status ≠ PAGO)</div></div>
-      <div class="cartao-indicador"><div class="valor">${UI.formatarMoeda(indicadores.total_pago_ano)}</div><div class="rotulo">Total pago no ano</div></div>
+      ${cartaoPago}
       <div class="cartao-indicador" title="Parcela mensal regular de toda unidade ativa × 12, menos o total pago no ano"><div class="valor">${UI.formatarMoeda(indicadores.total_a_pagar)}</div><div class="rotulo">Total a pagar no ano</div></div>`;
   }
 
