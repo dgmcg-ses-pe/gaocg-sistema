@@ -525,6 +525,38 @@ const Dashboard = (function () {
     renderAvisoSemMeta_(m.sem_meta || []);
   }
 
+  // Colunas Liquidado e Pago do painel "Processos do mês" (sessão 2026-11-09,
+  // pedido do usuário): check verde = feito, relógio amarelo = processo
+  // recebido aguardando a etapa, X vermelho = processo ainda não recebido.
+  const ICONE_ETAPA_ = {
+    feito: '<svg class="icone-etapa feito" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+    aguardando: '<svg class="icone-etapa aguardando" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+    ausente: '<svg class="icone-etapa ausente" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>'
+  };
+
+  /**
+   * Ícone de uma etapa (liquidado/pago) de uma linha de meta. A base é o maior
+   * entre esperado e recebido: só fica "feito" quando todos os processos dessa
+   * base passaram pela etapa. Nenhum recebido -> X; senão relógio. Com mais de
+   * um processo, mostra também a contagem (ex.: 1/2). Backend antigo (sem o
+   * campo) -> "-".
+   */
+  function etapaMetaHtml_(it, feitos, etapa) {
+    if (feitos === undefined || feitos === null) return '<span class="ajuda">-</span>';
+    const base = Math.max(Number(it.esperado) || 0, Number(it.chegado) || 0);
+    const rotuloEtapa = etapa === 'pago' ? 'pago(s)' : 'liquidado(s)';
+    let estado, titulo;
+    if (!it.chegado) {
+      estado = 'ausente'; titulo = 'Processo ainda não recebido';
+    } else if (feitos >= base) {
+      estado = 'feito'; titulo = `${feitos} de ${base} ${rotuloEtapa}`;
+    } else {
+      estado = 'aguardando'; titulo = `Recebido, aguardando: ${feitos} de ${base} ${rotuloEtapa}`;
+    }
+    const contagem = base > 1 ? ` <span class="etapa-contagem">${feitos}/${base}</span>` : '';
+    return `<span class="etapa-meta" title="${titulo}">${ICONE_ETAPA_[estado]}${contagem}</span>`;
+  }
+
   /** Filtra metasItensAtuais_ em memória (sem chamada ao backend) e redesenha só a tabela. */
   function renderTabelaMetas_() {
     const alvo = document.getElementById('dashMetasTabela');
@@ -553,14 +585,21 @@ const Dashboard = (function () {
       return;
     }
     alvo.innerHTML = `
+      <p class="dash-legenda-etapas">
+        <span>${ICONE_ETAPA_.feito} concluído</span>
+        <span>${ICONE_ETAPA_.aguardando} recebido, aguardando</span>
+        <span>${ICONE_ETAPA_.ausente} processo ainda não recebido</span>
+      </p>
       <table class="tabela">
-        <thead><tr><th>Unidade</th><th>Objeto</th><th>Esperado</th><th>Recebido</th><th>Falta</th></tr></thead>
+        <thead><tr><th>Unidade</th><th>Objeto</th><th>Esperado</th><th>Recebido</th><th>Liquidado</th><th>Pago</th><th>Falta</th></tr></thead>
         <tbody>${itens.map(it => `
           <tr data-unidade="${it.unidade_id}" data-objeto="${UI.escaparHtml(it.objeto)}">
             <td>${UI.escaparHtml(it.unidade_nome)}</td>
             <td>${UI.escaparHtml(it.objeto)}</td>
             <td>${it.esperado}</td>
             <td>${it.chegado}</td>
+            <td>${etapaMetaHtml_(it, it.liquidado, 'liquidado')}</td>
+            <td>${etapaMetaHtml_(it, it.pago, 'pago')}</td>
             <td>${it.excedente > 0
               ? `<span class="selo azul">excedente +${it.excedente}</span>`
               : it.falta > 0

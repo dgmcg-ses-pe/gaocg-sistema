@@ -638,6 +638,16 @@ table.tabela tbody tr.linha-sem-processo:hover { background: #fef3c7; }
 .dash-painel-cabecalho a:hover { text-decoration: underline; }
 /* Painel "NEs com saldo abaixo da parcela" (sessão 2026-09-01) - table.tabela tbody tr:hover acima já dá o cursor/hover da linha clicável. */
 #dashSaldoBaixoTabela strong.vermelho { color: var(--vermelho); }
+/* Colunas Liquidado e Pago do painel "Processos do mês" (sessão 2026-11-09). */
+.etapa-meta { display: inline-flex; align-items: center; gap: 4px; }
+.icone-etapa { flex-shrink: 0; }
+.icone-etapa.feito { color: var(--verde); }
+.icone-etapa.aguardando { color: var(--amarelo); }
+.icone-etapa.ausente { color: var(--vermelho); }
+.etapa-contagem { font-size: 12px; color: var(--cinza-500); }
+.dash-legenda-etapas { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 4px 0 8px; font-size: 12px; color: var(--cinza-500); }
+.dash-legenda-etapas span { display: inline-flex; align-items: center; gap: 4px; }
+.dash-legenda-etapas .icone-etapa { width: 14px; height: 14px; }
 /* Painel "Saldo das Notas de Empenho" (sessão 2026-11-09). */
 #dashSaldoNeTabela strong.vermelho { color: var(--vermelho); }
 #dashSaldoNeTabela tfoot td { border-top: 2px solid var(--cinza-300); }
