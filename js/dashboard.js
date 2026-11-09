@@ -467,7 +467,7 @@ const Dashboard = (function () {
     const total = itens.reduce((soma, it) => soma + (Number(it.saldo_atual) || 0), 0);
     alvo.innerHTML = `
       <table class="tabela">
-        <thead><tr><th>Nº da NE</th><th>Unidade</th><th>Objeto</th><th>Fonte</th><th>Saldo</th><th>Situação</th></tr></thead>
+        <thead><tr><th>Nº da NE</th><th>Unidade</th><th>Objeto</th><th>Fonte</th><th>Parcela Contratual</th><th>Saldo</th><th>Situação</th></tr></thead>
         <tbody>${itens.map(it => {
           const sit = situacaoSaldoNe_(it);
           const corSaldo = sit === 'sem_saldo' || sit === 'abaixo' ? 'vermelho' : '';
@@ -477,12 +477,13 @@ const Dashboard = (function () {
             <td>${UI.escaparHtml(it.unidade_nome || '-')}</td>
             <td>${UI.escaparHtml(it.objeto || '-')}</td>
             <td>${UI.escaparHtml(it.fonte || '-')}</td>
+            <td>${Number(it.parcela_mensal_referencia) > 0 ? UI.formatarMoeda(it.parcela_mensal_referencia) : '-'}</td>
             <td><strong class="${corSaldo}">${UI.formatarMoeda(it.saldo_atual)}</strong></td>
             <td>${SELO_SITUACAO_NE_[sit]}</td>
           </tr>`;
         }).join('')}
         </tbody>
-        <tfoot><tr><td colspan="4"><strong>Total</strong></td><td><strong>${UI.formatarMoeda(total)}</strong></td><td></td></tr></tfoot>
+        <tfoot><tr><td colspan="5"><strong>Total</strong></td><td><strong>${UI.formatarMoeda(total)}</strong></td><td></td></tr></tfoot>
       </table>`;
     alvo.querySelectorAll('tr[data-numero]').forEach(tr => {
       tr.addEventListener('click', () => App.navegarPara('notasEmpenho', { busca: tr.dataset.numero }));
@@ -672,14 +673,14 @@ const Dashboard = (function () {
         <span>${ICONE_ETAPA_.ausente} processo ainda não recebido</span>
       </p>
       <table class="tabela">
-        <thead><tr><th>Unidade</th><th>Objeto</th><th>Liquidado</th><th>Pago</th><th>Recebido</th></tr></thead>
+        <thead><tr><th>Unidade</th><th>Objeto</th><th>Recebido</th><th>Liquidado</th><th>Pago</th></tr></thead>
         <tbody>${itens.map(it => `
           <tr data-unidade="${it.unidade_id}" data-objeto="${UI.escaparHtml(it.objeto)}">
             <td>${UI.escaparHtml(it.unidade_nome)}</td>
             <td>${UI.escaparHtml(it.objeto)}</td>
+            <td>${recebidoMetaHtml_(it)}</td>
             <td>${etapaMetaHtml_(it, it.liquidado, 'liquidado')}</td>
             <td>${etapaMetaHtml_(it, it.pago, 'pago')}</td>
-            <td>${recebidoMetaHtml_(it)}</td>
           </tr>`).join('')}
         </tbody>
       </table>`;
