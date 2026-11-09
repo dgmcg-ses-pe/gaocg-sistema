@@ -733,6 +733,17 @@ table.tabela tbody tr.linha-sem-processo:hover { background: #fef3c7; }
 .cartao-sugestao:hover { box-shadow: var(--sombra-forte); }
 .cartao-sugestao-topo { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
 .cartao-sugestao-texto { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Fotos da sugestão (sessão 2026-11-09). */
+.cartao-sugestao-fotos { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; font-size: 12.5px; color: var(--cinza-500); }
+.sugestao-fotos-acoes { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.sugestao-fotos-acoes .botao { display: inline-flex; align-items: center; gap: 6px; }
+.sugestao-fotos-grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; margin-top: 8px; }
+.sugestao-fotos-grade:empty { display: none; }
+.sugestao-foto { position: relative; aspect-ratio: 1; border: 1px solid var(--cinza-200); border-radius: 8px; overflow: hidden; background: var(--cinza-100); display: flex; align-items: center; justify-content: center; text-align: center; padding: 0; }
+.sugestao-foto a { display: block; width: 100%; height: 100%; }
+.sugestao-foto img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.sugestao-foto-remover { position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border: none; border-radius: 50%; background: rgba(0,0,0,.6); color: #fff; font-size: 16px; line-height: 1; cursor: pointer; }
+.sugestao-foto-remover:hover { background: var(--vermelho); }
 .cartao-sugestao-feedback { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--cinza-200); font-size: 13px; color: var(--cinza-700); white-space: pre-wrap; overflow-wrap: anywhere; }
 .cartao-unidade-detalhe { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--cinza-200); font-size: 13px; }
 .cartao-unidade-detalhe-linha { display: flex; flex-wrap: nowrap; justify-content: space-between; gap: 4px 10px; padding: 3px 0; color: var(--cinza-700); }

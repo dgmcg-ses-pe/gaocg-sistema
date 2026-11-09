@@ -357,6 +357,11 @@ html[data-tema="novo"] .cartao-sof, html[data-tema="novo"] .cartao-ne, html[data
 html[data-tema="novo"] .cartao-sof:hover, html[data-tema="novo"] .cartao-ne:hover, html[data-tema="novo"] .cartao-unidade:hover { box-shadow: var(--sombra-forte); border-color: var(--cinza-300); }
 html[data-tema="novo"] .cartao-ne.alerta { border-left: 1px solid var(--vermelho); background: var(--vermelho-claro); }
 html[data-tema="novo"] .cartao-unidade.inativa { border-left-color: var(--cinza-200); }
+/* Cartão da tela de Sugestões (sessão 2026-11-09): o fundo era var(--branco),
+   que não muda no modo escuro, enquanto o texto segue o tema - texto claro em
+   fundo branco, ilegível. Fica numa superfície do tema, dentro do .painel. */
+html[data-tema="novo"] .cartao-sugestao { background: var(--superficie-2); color: var(--cinza-900); box-shadow: none; border: 1px solid var(--cinza-200); }
+html[data-tema="novo"] .cartao-sugestao:hover { box-shadow: var(--sombra-forte); border-color: var(--cinza-300); }
 html[data-tema="novo"] .cartao-sof-titulo, html[data-tema="novo"] .cartao-ne-numero { color: var(--cinza-900); font-family: var(--fonte-mono); font-size: 19px; letter-spacing: -.01em; }
 html[data-tema="novo"] .cartao-sof-subtitulo { color: var(--cinza-500); font-weight: 650; text-transform: uppercase; font-size: 11px; letter-spacing: .04em; }
 html[data-tema="novo"] .cartao-ne-unidade { color: var(--cinza-500); font-weight: 650; text-transform: uppercase; font-size: 11px; letter-spacing: .04em; }

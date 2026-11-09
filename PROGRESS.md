@@ -3177,6 +3177,24 @@ Pedidos do usuário: (1) a NE concluída aparecia como "1 sem saldo" no card "Sa
 
 **Testado:** `dashboardNotasEmpenho_` real em Node com grupos simulados (concluída fora, esgotadas não concluídas dentro). App real em localhost com `fetch` simulado e chamadas ao Apps Script bloqueadas: abrir/fechar o painel, os 4 filtros de Situação, filtro de Unidade com total, limpar filtro, nome com HTML escapado, clique na NE abrindo Notas de Empenho com a busca e página 1, largura de celular (tabela rola dentro do painel, sem rolagem lateral da página). **Não testado:** dados reais.
 
+## Sugestões: contraste no modo escuro e fotos anexadas (sessão 2026-11-09, ⚠️ backend pendente de implantar, frontend pendente de publicar)
+
+Pedidos do usuário: (1) no modo escuro o texto das sugestões ficava ilegível; (2) poder anexar fotos ao fazer uma sugestão.
+
+- **Contraste (`css/tema-novo.css`):** `.cartao-sugestao` usava `background: var(--branco)`, que não muda no modo escuro, enquanto o texto segue o tema. Agora usa `--superficie-2` com borda, como os outros cards. Conferido nos modos claro e escuro. Não foi feita uma varredura dos outros `var(--branco)` do `style.css`.
+- **Backend (`Sugestoes.gs`, `Utils.gs`, `Code.gs`):**
+  - `criarSugestao` aceita `fotos: [{nome, tipo, base64}]`: até 5, JPG/PNG/WEBP/GIF, até 4 MB cada. Valida tudo antes de gravar; as fotos sobem antes da linha e, se alguma falhar, as já criadas vão para a lixeira e nada é gravado.
+  - Pasta do Drive "GAOCG App - Fotos das Sugestões", criada na primeira foto ao lado da planilha; o id fica na Script Property `PASTA_FOTOS_SUGESTOES_ID`.
+  - Coluna `fotos` (JSON `[{id, nome, tipo}]`) acrescentada sozinha ao cabeçalho da aba Sugestoes na primeira sugestão com foto. `HEADERS.Sugestoes` também ganhou a coluna.
+  - Ação nova `obterFotoSugestao(id, foto_id)`: devolve a imagem em base64 só para o autor e o Administrador, e só se a foto pertence àquela sugestão. O frontend nunca recebe link do Drive.
+  - O e-mail de nova sugestão leva as fotos anexadas.
+  - `listarSugestoes`, `atualizarSugestao` e `responderSugestao` devolvem `fotos` como lista `[{id, nome}]`.
+- **Frontend (`js/sugestoes.js`, `css/style.css`, `js/api.js`):** botão "Anexar fotos" e colar print (Ctrl+V) no formulário, com miniaturas e remoção. Imagens maiores que 1600 px (ou PNG acima de 1,5 MB) são reduzidas e convertidas em JPEG no navegador; PNG pequeno e GIF vão como estão. O card mostra "N fotos anexadas"; o detalhe carrega as miniaturas, e clicar abre a foto em tamanho real em outra aba. `obterFotoSugestao` entrou na lista de ações repetíveis.
+- **Ordem de publicação:** implantar o backend antes do frontend. Com o backend antigo, `criarSugestao` ignoraria as fotos sem avisar.
+- **Fora do escopo:** anexar ou remover fotos ao editar uma sugestão já enviada.
+
+**Testado:** `Sugestoes.gs` real em Node com Drive, planilha e e-mail simulados (20 casos: com e sem foto, cabeçalho antigo, pasta reaproveitada, limites, PDF, base64 inválido, falha no meio do upload, permissões de autor/Administrador/outro, foto de outra sugestão). App em localhost com `fetch` simulado: indicador no card, miniaturas no detalhe (incluindo foto que falha), anexar pelo botão, PDF recusado, colar print, remover, limite de 5, conteúdo enviado (JPEG 3000x2000 reduzido para 1600x1067; PNG mantido). **Não testado:** Drive, e-mail e Apps Script reais.
+
 ## Referências úteis
 - Repositório: `https://github.com/AndersonG2021/APP-GAOCG.git`, branch `main`, publicado via GitHub Pages.
 - Backend roda só no Apps Script; **sempre que um `.gs` mudar, colar manualmente, reimplantar (Implantar → Gerenciar implantações → editar → Nova versão) E atualizar a cópia correspondente em `/backend` neste repositório**, no mesmo commit.

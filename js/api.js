@@ -72,7 +72,7 @@ const Api = (function () {
     'listarSof', 'obterSof', 'obterTemplateSof',
     'listarNotasEmpenho', 'listarNotasEmpenhoPorSof', 'listarNotasEmpenhoPorUnidade', 'listarObjetosSofPorUnidade',
     'listarRecibos', 'indicadoresRecibos', 'listarRecibosPorGrupo', 'listarObservacoesRecibo',
-    'listarLogAuditoria', 'listarSugestoes',
+    'listarLogAuditoria', 'listarSugestoes', 'obterFotoSugestao',
     'obterDashboard', 'obterGraficoDashboard',
     'listarMetasProcessos',
     'obterCatalogoRelatorios', 'listarModelosRelatorio', 'gerarRelatorio',
