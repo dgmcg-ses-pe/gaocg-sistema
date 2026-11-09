@@ -3120,7 +3120,7 @@ O usuário enviou telas do modelo "SES - SOF" do SEI e do documento que o app es
 
 **Testado:** HTML gerado com o código real, passando por `prepararHtmlParaEditor_` e `sanitizarHtmlDocumento_`, em SOF vazia e preenchida. **Não testado:** envio real ao SEI (CKEditor pode alterar parte dos estilos).
 
-## NE do Recibo só por seleção, filtrada pelo Objeto (sessão 2026-11-06, frontend publicado, `Recibos.gs` pendente de colar)
+## NE do Recibo só por seleção, filtrada pelo Objeto (sessão 2026-11-06, frontend publicado, backend implantado na versão 109)
 
 Pedido do usuário: no formulário de Recibo (novo e edição) a NE não é mais digitada; só se escolhe uma NE já existente do objeto do recibo. Substitui a decisão de 2026-07-29 ("continua aceitando texto livre").
 
@@ -3129,7 +3129,7 @@ Pedido do usuário: no formulário de Recibo (novo e edição) a NE não é mais
 - **NE antiga na edição:** NE salva fora da lista aparece como opção "(NE atual, fora da lista)" e é mantida enquanto o objeto não mudar, com aviso. Trocar o objeto a remove; voltar ao objeto salvo a restaura. Decisão: bloquear impediria editar qualquer outro campo de recibo histórico.
 - **Sem NE continua permitido** (rascunho e recibos gerados da meta). Consequência: anexar LE/OB exige NE selecionada, então objeto sem NE cadastrada não aceita anexo até a NE existir.
 - **Ajustes necessários no caminho:** Objeto fora da lista global agora aparece no select da edição (antes abria vazio e era apagado ao salvar); trocar a unidade limpa também o texto visível do Objeto; resposta atrasada de outra unidade é descartada.
-- **`backend/Recibos.gs` (⚠️ colar e reimplantar):** `erroNeDoRecibo_` e `erroNeNaEdicaoRecibo_`, chamadas em `criarRecibo`, `criarGrupoParcelaDivididaRecibo`, `atualizarRecibo` e `atualizarParcelasDivididasRecibo`. Troca de status na listagem não é afetada. Só `Recibos.gs` mudou; nada de `Code.gs` ou planilha.
+- **`backend/Recibos.gs` (implantado via clasp, versão 109; para voltar, reimplantar a 108):** `erroNeDoRecibo_` e `erroNeNaEdicaoRecibo_`, chamadas em `criarRecibo`, `criarGrupoParcelaDivididaRecibo`, `atualizarRecibo` e `atualizarParcelasDivididasRecibo`. Troca de status na listagem não é afetada. Só `Recibos.gs` mudou; nada de `Code.gs` ou planilha.
 
 **Testado:** app real em localhost com `Api.chamar` simulada e `fetch` ao Apps Script bloqueado: criar, editar, trocar objeto, objeto sem NE, NE antiga (manter, trocar, remover), NE injetada no DOM recusada, corrida entre unidades, falha de carga, parcela dividida, anexo. `Recibos.gs` real executado no navegador com planilha simulada: casos inválidos recusados antes de qualquer escrita, válidos chegando à escrita. **Não testado:** Apps Script real e dados reais. Não foi medido quantas NEs antigas têm `objeto` vazio na planilha; essas nunca aparecem na lista até serem corrigidas. **Follow-up conhecido, não alterado:** LE/OB validada por OCR contra uma NE continua no formulário se a NE mudar depois.
 
