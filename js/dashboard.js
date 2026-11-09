@@ -163,7 +163,7 @@ const Dashboard = (function () {
 
       ${painelSaldoBaixoHtml_()}
       ${painelSaldoNeHtml_()}
-      ${painelMetasDetalheHtml_()}
+      ${painelMetasDetalheHtml_(metas)}
       ${painelGraficosHtml_()}
       ${painelPrazosHtml_()}`;
 
@@ -181,6 +181,8 @@ const Dashboard = (function () {
     configurarPainelMetas_(metas);
     configurarGraficos_();
     carregarPrazosContratuais_();
+    configurarPainelRecolhivel_('dashGraficosPainel', 'dashGraficosRecolher');
+    configurarPainelRecolhivel_('dashPrazosPainel', 'dashPrazosRecolher');
   }
 
   // ===== Card "NEs com saldo abaixo da parcela" (sessão 2026-09-01, pedido
@@ -201,13 +203,70 @@ const Dashboard = (function () {
       </div>`;
   }
 
+  // ===== Cabeçalho comum das seções do Dashboard (sessão 2026-11-09, pedido
+  // do usuário: toda seção com título e opção de recolher). Seção aberta por
+  // card (Saldo baixo, Saldo das NEs, Processos do mês): o botão fecha, igual a
+  // clicar no card de novo. Seção fixa (Gráficos, Prazos): o botão recolhe até
+  // o título, e a escolha fica salva neste navegador (localStorage).
+  const CHAVE_PAINEIS_RECOLHIDOS_ = 'gaocg_dash_paineis_recolhidos';
+
+  function cabecalhoPainelHtml_(titulo, idBotao, extraHtml) {
+    return `
+      <div class="dash-painel-cabecalho">
+        <h3>${titulo}</h3>
+        <div class="dash-painel-cabecalho-acoes">
+          ${extraHtml || ''}
+          <button type="button" class="dash-painel-recolher" id="${idBotao}" title="Recolher seção" aria-label="Recolher seção" aria-expanded="true">${ICONE_CHEVRON}</button>
+        </div>
+      </div>`;
+  }
+
+  function lerPaineisRecolhidos_() {
+    try { return JSON.parse(localStorage.getItem(CHAVE_PAINEIS_RECOLHIDOS_) || '[]') || []; } catch (e) { return []; }
+  }
+
+  function salvarPaineisRecolhidos_(lista) {
+    try { localStorage.setItem(CHAVE_PAINEIS_RECOLHIDOS_, JSON.stringify(lista)); } catch (e) { /* conveniência - sem storage, só não lembra */ }
+  }
+
+  /** Seção fixa: aplica o estado salvo e liga o botão de recolher/expandir. */
+  function configurarPainelRecolhivel_(idPainel, idBotao) {
+    const painel = document.getElementById(idPainel);
+    const botao = document.getElementById(idBotao);
+    if (!painel || !botao) return;
+    const aplicar = recolhido => {
+      painel.classList.toggle('recolhido', recolhido);
+      botao.setAttribute('aria-expanded', String(!recolhido));
+      botao.title = recolhido ? 'Expandir seção' : 'Recolher seção';
+      botao.setAttribute('aria-label', botao.title);
+    };
+    aplicar(lerPaineisRecolhidos_().indexOf(idPainel) !== -1);
+    botao.addEventListener('click', () => {
+      const recolher = !painel.classList.contains('recolhido');
+      aplicar(recolher);
+      const lista = lerPaineisRecolhidos_().filter(id => id !== idPainel);
+      if (recolher) lista.push(idPainel);
+      salvarPaineisRecolhidos_(lista);
+    });
+  }
+
+  /** Seção aberta por card: o botão do cabeçalho fecha a seção e acerta o chevron do card. */
+  function ligarFecharPainelDeCard_(idBotao, detalheEl, chevronEl, aoFechar) {
+    const botao = document.getElementById(idBotao);
+    if (!botao) return;
+    botao.title = 'Fechar seção';
+    botao.setAttribute('aria-label', 'Fechar seção');
+    botao.addEventListener('click', () => {
+      detalheEl.classList.add('oculto');
+      if (chevronEl) chevronEl.classList.remove('aberta');
+      aoFechar();
+    });
+  }
+
   function painelSaldoBaixoHtml_() {
     return `
       <div class="painel oculto" id="dashSaldoBaixoDetalhe">
-        <div class="dash-painel-cabecalho">
-          <h3>Notas de Empenho com saldo abaixo da parcela</h3>
-          <a href="#" id="dashSaldoBaixoVerTodas">Ver na tela de Notas de Empenho →</a>
-        </div>
+        ${cabecalhoPainelHtml_('Notas de Empenho com saldo abaixo da parcela', 'dashSaldoBaixoFechar', '<a href="#" id="dashSaldoBaixoVerTodas">Ver na tela de Notas de Empenho →</a>')}
         <div id="dashSaldoBaixoTabela"></div>
       </div>`;
   }
@@ -234,6 +293,7 @@ const Dashboard = (function () {
       e.preventDefault();
       App.navegarPara('notasEmpenho', { saldoBaixo: true });
     });
+    ligarFecharPainelDeCard_('dashSaldoBaixoFechar', detalheEl, chevronEl, () => { saldoBaixoAbertoAtual_ = false; });
 
     renderTabelaSaldoBaixo_();
   }
@@ -289,10 +349,7 @@ const Dashboard = (function () {
   function painelSaldoNeHtml_() {
     return `
       <div class="painel oculto" id="dashSaldoNeDetalhe">
-        <div class="dash-painel-cabecalho">
-          <h3>Saldo das Notas de Empenho</h3>
-          <a href="#" id="dashSaldoNeVerTodas">Ver na tela de Notas de Empenho →</a>
-        </div>
+        ${cabecalhoPainelHtml_('Saldo das Notas de Empenho', 'dashSaldoNeFechar', '<a href="#" id="dashSaldoNeVerTodas">Ver na tela de Notas de Empenho →</a>')}
         <div class="barra-filtros">
           <div class="campo campo-filtro-multiplo"><label style="width:100%">Unidade</label>
             <div id="dashSaldoNeFiltroUnidade"></div><button type="button" class="filtro-multiplo-x" data-alvo="dashSaldoNeFiltroUnidade" title="Limpar filtro de Unidade">&times;</button>
@@ -356,6 +413,7 @@ const Dashboard = (function () {
       e.preventDefault();
       App.navegarPara('notasEmpenho');
     });
+    ligarFecharPainelDeCard_('dashSaldoNeFechar', detalheEl, chevronEl, () => { saldoNeAbertoAtual_ = false; });
 
     const unidadesOpcoes = [];
     const unidadesVistas = new Set();
@@ -455,9 +513,10 @@ const Dashboard = (function () {
       </div>`;
   }
 
-  function painelMetasDetalheHtml_() {
+  function painelMetasDetalheHtml_(m) {
     return `
       <div class="painel oculto" id="dashMetasDetalhe">
+        ${cabecalhoPainelHtml_(`Processos do mês ${UI.escaparHtml((m && m.competencia) || '')}`, 'dashMetasFechar', '<a href="#" id="dashMetasVerTodas">Gerenciar metas →</a>')}
         <div class="barra-filtros">
           <div class="campo campo-filtro-multiplo"><label style="width:100%">Unidade</label>
             <div id="dashMetasFiltroUnidade"></div><button type="button" class="filtro-multiplo-x" data-alvo="dashMetasFiltroUnidade" title="Limpar filtro de Unidade">&times;</button>
@@ -477,7 +536,6 @@ const Dashboard = (function () {
           </div>
           <span style="flex:1"></span>
           <span id="dashMetasContagem" class="ajuda" style="align-self:center"></span>
-          <a href="#" id="dashMetasVerTodas" style="font-size:12.5px;color:var(--azul);text-decoration:none;font-weight:600;align-self:center">Gerenciar metas →</a>
         </div>
         <div id="dashMetasTabela"></div>
         <div id="dashMetasAviso"></div>
@@ -520,6 +578,7 @@ const Dashboard = (function () {
     UI.ligarLimpezaFiltros('#dashMetasDetalhe', null, renderTabelaMetas_);
     document.getElementById('dashMetasFiltroEstado').addEventListener('change', renderTabelaMetas_);
     document.getElementById('dashMetasVerTodas').addEventListener('click', e => { e.preventDefault(); App.navegarPara('metasProcessos'); });
+    ligarFecharPainelDeCard_('dashMetasFechar', detalheEl, chevronEl, () => { metasAbertoAtual_ = false; });
 
     renderTabelaMetas_();
     renderAvisoSemMeta_(m.sem_meta || []);
@@ -651,9 +710,11 @@ const Dashboard = (function () {
   // cache:true, mesmo padrão já usado em SOF/Recibos pra popular filtros.
   function painelPrazosHtml_() {
     return `
-      <div class="painel">
-        <div class="dash-painel-cabecalho"><h3>Prazos contratuais das Unidades</h3></div>
-        <div id="dashPrazosArea"><p class="estado-vazio">Carregando…</p></div>
+      <div class="painel" id="dashPrazosPainel">
+        ${cabecalhoPainelHtml_('Prazos contratuais das Unidades', 'dashPrazosRecolher')}
+        <div class="dash-painel-corpo">
+          <div id="dashPrazosArea"><p class="estado-vazio">Carregando…</p></div>
+        </div>
       </div>`;
   }
 
@@ -735,8 +796,9 @@ const Dashboard = (function () {
 
   function painelGraficosHtml_() {
     return `
-      <div class="painel dash-graficos">
-        <div class="dash-painel-cabecalho"><h3>Gráficos</h3></div>
+      <div class="painel dash-graficos" id="dashGraficosPainel">
+        ${cabecalhoPainelHtml_('Gráficos', 'dashGraficosRecolher')}
+        <div class="dash-painel-corpo">
         <div class="dash-graf-controles">
           <div class="campo"><label>Métrica</label><select id="grafMetrica">${opcoesSelectHtml_(GRAF_METRICAS_, 'pago')}</select></div>
           <div class="campo"><label>Agrupar por</label><select id="grafAgrupar">${opcoesSelectHtml_(GRAF_DIMENSOES_, 'oss')}</select></div>
@@ -745,6 +807,7 @@ const Dashboard = (function () {
           <div class="campo"><label>Até</label><select id="grafCompFim">${UI.opcoesCompetenciaHtml('', true)}</select></div>
         </div>
         <div id="grafArea" class="dash-graf-area"><p class="estado-vazio">Carregando…</p></div>
+        </div>
       </div>`;
   }
 

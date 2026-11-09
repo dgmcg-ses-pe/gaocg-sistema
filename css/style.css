@@ -636,6 +636,15 @@ table.tabela tbody tr.linha-sem-processo:hover { background: #fef3c7; }
 .dash-painel-cabecalho h3 { margin: 0; font-size: 14px; }
 .dash-painel-cabecalho a { font-size: 12.5px; color: var(--azul); text-decoration: none; font-weight: 600; }
 .dash-painel-cabecalho a:hover { text-decoration: underline; }
+/* Botão de recolher/fechar de cada seção do Dashboard (sessão 2026-11-09). */
+.dash-painel-cabecalho-acoes { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.dash-painel-cabecalho { gap: 12px; flex-wrap: wrap; }
+.dash-painel-recolher { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--cinza-200); border-radius: 8px; background: transparent; color: var(--cinza-500); cursor: pointer; padding: 0; }
+.dash-painel-recolher:hover { background: var(--cinza-100); color: var(--cinza-900); }
+.dash-painel-recolher svg { transform: rotate(180deg); transition: transform .15s ease; }
+.painel.recolhido .dash-painel-recolher svg { transform: none; }
+.painel.recolhido .dash-painel-corpo { display: none; }
+.painel.recolhido .dash-painel-cabecalho { margin-bottom: 0; }
 /* Painel "NEs com saldo abaixo da parcela" (sessão 2026-09-01) - table.tabela tbody tr:hover acima já dá o cursor/hover da linha clicável. */
 #dashSaldoBaixoTabela strong.vermelho { color: var(--vermelho); }
 /* Colunas Liquidado e Pago do painel "Processos do mês" (sessão 2026-11-09). */
