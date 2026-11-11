@@ -397,6 +397,12 @@ table.tabela tbody tr.linha-sem-processo:hover { background: #fef3c7; }
 .cartao-grupo-recibo-observacao-meta { font-size: 11px; color: var(--cinza-500); }
 .cartao-grupo-recibo table.tabela th { position: static; }
 
+/* Recibo que acabou de receber LE/OB pela extensão (2026-11-11): contorno verde
+   pulsando por alguns segundos (ver destacarRecibosAlterados_, js/recibos.js). */
+@keyframes reciboAtualizadoPulso { 0%, 100% { box-shadow: 0 0 0 0 rgba(30, 123, 60, 0); } 50% { box-shadow: 0 0 0 4px rgba(30, 123, 60, .45); } }
+.cartao-grupo-recibo.recibo-atualizado-extensao { border-left-color: #1e7b3c; animation: reciboAtualizadoPulso 1.2s ease-in-out 4; }
+table.tabela tbody tr.recibo-atualizado-extensao td { background: #e3f5e8; transition: background .4s; }
+
 /* ===== Observações de Recibo (comentários com autor+data, sessão 2026-08-26) ===== */
 .observacoes-recibo-lista { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
 .observacao-recibo { background: var(--cinza-100); border-radius: var(--raio); padding: 8px 10px; }

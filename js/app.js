@@ -1261,8 +1261,21 @@ const App = (function () {
     // Com a troca pendente o servidor recusa tudo (ver Code.gs): só carrega depois
     // de trocar, no submit de formTrocaSenhaObrigatoria.
     if (usuario.precisaTrocarSenha) return;
-    navegarPara('dashboard');
+    navegarPara(telaInicial_());
     preCarregarAbas_();
+  }
+
+  /**
+   * Aba em que o app abre (2026-11-11, pedido do usuário): ao atualizar a página,
+   * volta para a aba em que a pessoa estava. navegarPara guarda a aba no endereço
+   * (#recibos) - sem o endereço, ou com uma aba que este perfil não vê, é o Dashboard.
+   */
+  function telaInicial_() {
+    const tela = decodeURIComponent((location.hash || '').replace(/^#/, ''));
+    if (!tela || !TELAS[tela]) return 'dashboard';
+    const botao = document.querySelector('#barraLateral nav button[data-tela="' + tela + '"]');
+    if (!botao || botao.classList.contains('oculto') || botao.closest('.oculto')) return 'dashboard';
+    return tela;
   }
 
   /**
@@ -1403,6 +1416,9 @@ const App = (function () {
       '#barraLateral nav button[data-tela="' + tela + '"]'
     ).textContent;
     document.getElementById('conteudo').innerHTML = '';
+    // replaceState, não pushState: só lembra a aba para o F5 (ver telaInicial_),
+    // sem encher o "Voltar" do navegador com cada troca de aba.
+    try { history.replaceState(null, '', '#' + tela); } catch (e) { /* sem history: só não lembra a aba */ }
     TELAS[tela](opts);
   }
 

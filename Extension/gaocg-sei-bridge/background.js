@@ -383,6 +383,22 @@ async function chamarAppGaocg_(acao, dados) {
   return { ok: false, erro: json.error || "O app GAOCG não respondeu." };
 }
 
+/**
+ * Avisa as abas do app abertas neste navegador que um Recibo mudou (2026-11-11, pedido
+ * do usuário: a lista de Recibos atualiza na hora quando a extensão anexa LE/OB). Quem
+ * repassa para a página é content-app.js; aba sem ele (app em outra origem) só ignora.
+ */
+const URLS_APP_GAOCG_ = ["https://andersong2021.github.io/APP-GAOCG/*", "https://dgmcg-ses-pe.github.io/gaocg-sistema/*"];
+
+async function avisarAppRecibosAlterados_(alteracoes) {
+  try {
+    const abas = await chrome.tabs.query({ url: URLS_APP_GAOCG_ });
+    await Promise.all(abas.map(aba =>
+      chrome.tabs.sendMessage(aba.id, { type: "GAOCG_RECIBOS_ALTERADOS", alteracoes: alteracoes }).catch(() => {})
+    ));
+  } catch (e) { /* melhor esforço: a lista também se confere ao voltar para a aba do app */ }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || message.type !== "DOCUMENTOS_GAOCG") return false;
   if (sender.id !== chrome.runtime.id || !sender.tab || !/^https:\/\/sei\.pe\.gov\.br\//.test(sender.url || "")) {
@@ -390,7 +406,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
   chamarAppGaocg_(message.acao, message.dados)
-    .then(sendResponse)
+    .then(resposta => {
+      const r = resposta && resposta.ok && resposta.dados;
+      if (message.acao === "anexarDocumentoSeiRecibo" && r && r.resultado === "anexado") {
+        avisarAppRecibosAlterados_([{
+          recibo_id: r.recibo_id, recibo_descricao: r.recibo_descricao || "", tipo: r.tipo, numero_documento: r.numero_documento
+        }]);
+      }
+      sendResponse(resposta);
+    })
     .catch(erro => sendResponse({ ok: false, erro: String(erro && erro.message ? erro.message : erro) }));
   return true;
 });

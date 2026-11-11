@@ -78,5 +78,17 @@ const CacheAbas = (function () {
     });
   }
 
-  return { comRevalidacao, invalidar };
+  /**
+   * O recurso mudou no servidor desde o último snapshot guardado? Uma chamada barata
+   * (getVersoes) - usada ao voltar para a aba do app (2026-11-11), pra só recarregar
+   * a lista quando alguém mexeu nela por fora. Sem snapshot, responde que mudou.
+   */
+  async function versaoMudou(recurso) {
+    const guardados = Array.from(snapshots.entries()).filter(([k]) => k.indexOf(recurso + ':') === 0);
+    if (!guardados.length) return true;
+    const versoes = await obterVersoes();
+    return guardados.some(([, snap]) => versoes[recurso] !== snap.versao);
+  }
+
+  return { comRevalidacao, invalidar, versaoMudou };
 })();

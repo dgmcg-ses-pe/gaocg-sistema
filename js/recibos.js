@@ -9,9 +9,8 @@ const TelaRecibos = (function () {
   let paginaAtual = 1;
   let totalRegistros = 0;
   // Tamanho de página escolhível (sessão 2026-08-31) - ver mesma explicação
-  // em js/sof.js. Aqui o valor inicial (antes do 1º render()) é 20 mas
-  // render() troca pra TAMANHO_PAGINA_TODOS_ quando não há competência
-  // explícita vinda de fora - ver comentário no render() abaixo.
+  // em js/sof.js. Começa em 20: desde 2026-11-11 a tela abre sem filtro de
+  // competência (pedido do usuário), então "Todos" traria a base inteira de uma vez.
   let tamanhoPagina = 20;
   const TAMANHO_PAGINA_TODOS_ = 100000;
   let contadorLinhasParcelaDividida = 0;
@@ -191,20 +190,10 @@ const TelaRecibos = (function () {
     UI.criarFiltroMultiplo('recFiltroAno', UI.listaAnos(), null, aplicarFiltros_);
     UI.criarFiltroMultiplo('recFiltroFonte', ['TESOURO', 'SUS', 'Outra'], null, aplicarFiltros_);
     UI.criarFiltroMultiplo('recFiltroStatus', statusFiltroOpcoes.map(o => o.valor), null, aplicarFiltros_);
-    // Competência (sessão 2026-08-31, pedido do usuário: "todas as linhas
-    // referente áquele mês já sejam carregadas juntos" ao entrar na aba) -
-    // sem competência explícita vinda de fora (navegação normal pelo menu),
-    // o padrão passa a ser o mês atual, com "Por página" em "Todos" (ver
-    // logo abaixo) - o usuário ainda pode trocar os dois livremente depois.
-    UI.definirValoresFiltroMultiplo('recFiltroCompetencia', (filtroInicial && filtroInicial.competencia) || [mesAtualComoCompetencia_()]);
-    if (!(filtroInicial && filtroInicial.competencia)) {
-      // paginaAtual também precisa voltar pra 1 aqui: ela sobrevive entre
-      // visitas à aba (mesmo princípio de "lembra onde parou" já usado
-      // nesta tela), mas uma página > 1 salva de uma visita anterior com
-      // outro tamanhoPagina ficaria fora do intervalo real com TODOS.
-      tamanhoPagina = TAMANHO_PAGINA_TODOS_;
-      paginaAtual = 1;
-    }
+    // Competência: só vem marcada quando outra tela pede (ex.: card de Recibos
+    // do Dashboard). Pelo menu, a tela abre sem filtro nenhum (2026-11-11,
+    // pedido do usuário - antes abria no mês corrente, com "Todos" por página).
+    if (filtroInicial && filtroInicial.competencia) UI.definirValoresFiltroMultiplo('recFiltroCompetencia', filtroInicial.competencia);
     if (filtroInicial && filtroInicial.status) UI.definirValoresFiltroMultiplo('recFiltroStatus', filtroInicial.status);
     // unidade_id/objeto (Dashboard, painel "Processos do mês" - Metas de
     // Processos): clique numa linha da tabela de metas já navega pra Recibos
@@ -316,15 +305,14 @@ const TelaRecibos = (function () {
 
   /**
    * Mesmo formato "vazio" de filtrosAtuais(), sem depender do DOM - ver
-   * mesma função em js/sof.js. Usada só por preCarregar(); competencia já
-   * vem no mês atual e não `[]`, pra bater com o filtro padrão que render()
-   * aplica quando não há competência explícita (ver comentário lá) - senão
-   * a pré-carga aqueceria uma chave de cache que o 1º render() real nunca usa.
+   * mesma função em js/sof.js. Usada só por preCarregar(), e precisa bater com
+   * o que o 1º render() pede (sem filtro, desde 2026-11-11) - senão a pré-carga
+   * aqueceria uma chave de cache que a tela nunca usa.
    */
   function filtrosPadrao_() {
     return {
       busca: '', unidade_id: [], oss: [], objeto: [], tipo_unidade: [], dea: [],
-      competencia: [mesAtualComoCompetencia_()], ano: [], fonte: [], status: []
+      competencia: [], ano: [], fonte: [], status: []
     };
   }
 
@@ -337,7 +325,7 @@ const TelaRecibos = (function () {
         TelaListas.obterOpcoes('OSS', { silencioso: true }),
         TelaListas.obterOpcoes('OBJETO', { silencioso: true })
       ]);
-      const params = Object.assign({ page: 1, pageSize: TAMANHO_PAGINA_TODOS_ }, filtrosPadrao_());
+      const params = Object.assign({ page: paginaAtual, pageSize: tamanhoPagina }, filtrosPadrao_());
       await CacheAbas.comRevalidacao('recibos', params,
         (opcoes) => Api.chamar('listarRecibos', params, Object.assign({ silencioso: true }, opcoes)),
         () => {}
@@ -2075,6 +2063,70 @@ const TelaRecibos = (function () {
       UI.mostrarErro(erroEl, err.message);
     }
   }
+
+  /* ============ atualização ao vivo (LE/OB anexadas pela extensão) ============
+   *
+   * 2026-11-11, pedido do usuário: quando a extensão anexa uma LE/OB num Recibo a
+   * partir do SEI, a lista de Recibos recarrega na hora - só a lista, não a página -
+   * e destaca o que mudou. O aviso chega por window.postMessage, repassado pelo
+   * content-app.js da extensão (só existe no navegador onde a extensão agiu).
+   * Para mudanças feitas em outro computador, a lista se confere ao voltar para a
+   * aba do app (versaoMudou: uma chamada barata, só recarrega se mudou mesmo).
+   */
+  const DESTAQUE_ATUALIZADO_MS_ = 8000;
+  let ultimaConferenciaAoVoltar_ = 0;
+
+  function telaRecibosAberta_() {
+    return !!document.getElementById('listaRecibos');
+  }
+
+  function destacarRecibosAlterados_(alteracoes) {
+    const foraDaLista = [];
+    alteracoes.forEach(a => {
+      const linha = document.querySelector(`#listaRecibos tr[data-id="${CSS.escape(String(a.recibo_id))}"]`);
+      if (!linha) { foraDaLista.push(a); return; }
+      const alvo = linha.closest('.cartao-grupo-recibo') || linha;
+      alvo.classList.remove('recibo-atualizado-extensao');
+      void alvo.offsetWidth; // reinicia a animação se o mesmo recibo mudar de novo
+      alvo.classList.add('recibo-atualizado-extensao');
+      setTimeout(() => alvo.classList.remove('recibo-atualizado-extensao'), DESTAQUE_ATUALIZADO_MS_);
+    });
+    return foraDaLista;
+  }
+
+  function textoAlteracao_(a) {
+    const doc = (a.tipo === 'OB' ? 'Ordem Bancária ' : a.tipo === 'LE' ? 'Nota de Liquidação ' : 'Documento ') + (a.numero_documento || '');
+    return doc.trim() + ' anexada no recibo ' + a.recibo_id + (a.recibo_descricao ? ' (' + a.recibo_descricao + ')' : '');
+  }
+
+  async function aoReceberAlteracaoDaExtensao_(alteracoes) {
+    CacheAbas.invalidar('recibos');
+    CacheAbas.invalidar('dashboard');
+    if (!telaRecibosAberta_()) {
+      alteracoes.forEach(a => UI.toast('Extensão: ' + textoAlteracao_(a) + '.', 'info'));
+      return;
+    }
+    try { await carregar(); } catch (e) { return; }
+    const foraDaLista = destacarRecibosAlterados_(alteracoes);
+    alteracoes.forEach(a => UI.toast('Extensão: ' + textoAlteracao_(a) +
+      (foraDaLista.indexOf(a) !== -1 ? ' - fora dos filtros/página atuais.' : '.'), 'sucesso'));
+  }
+
+  window.addEventListener('message', (evento) => {
+    const d = evento.data;
+    if (evento.source !== window || !d || d.origem !== 'gaocg-sei-bridge' || d.tipo !== 'recibos-alterados') return;
+    const alteracoes = (Array.isArray(d.alteracoes) ? d.alteracoes : []).filter(a => a && a.recibo_id);
+    if (alteracoes.length) aoReceberAlteracaoDaExtensao_(alteracoes);
+  });
+
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState !== 'visible' || !telaRecibosAberta_()) return;
+    if (Date.now() - ultimaConferenciaAoVoltar_ < 30000) return; // vai e volta rápido entre abas não repete a conferência
+    ultimaConferenciaAoVoltar_ = Date.now();
+    try {
+      if (await CacheAbas.versaoMudou('recibos')) await carregar();
+    } catch (e) { /* conferência de cortesia - a lista segue como estava */ }
+  });
 
   return { render, preCarregar };
 })();
