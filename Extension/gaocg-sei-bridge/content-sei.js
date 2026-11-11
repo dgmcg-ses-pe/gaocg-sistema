@@ -2977,13 +2977,35 @@ function bytesParaBase64_(bytes) {
   return btoa(binario);
 }
 
-async function baixarPdfDaArvore_(url) {
+/** Corpo da resposta inteiro, avisando a fração já recebida (0..1) quando o SEI informa o tamanho. */
+async function lerBytesComProgresso_(resposta, aoProgresso) {
+  const total = Number(resposta.headers.get("content-length")) || 0;
+  if (!aoProgresso || !total || !resposta.body || !resposta.body.getReader) {
+    return new Uint8Array(await resposta.arrayBuffer());
+  }
+  const leitor = resposta.body.getReader();
+  const partes = [];
+  let recebido = 0;
+  for (;;) {
+    const { done, value } = await leitor.read();
+    if (done) break;
+    partes.push(value);
+    recebido += value.length;
+    aoProgresso(Math.min(1, recebido / total));
+  }
+  const bytes = new Uint8Array(recebido);
+  let pos = 0;
+  partes.forEach(p => { bytes.set(p, pos); pos += p.length; });
+  return bytes;
+}
+
+async function baixarPdfDaArvore_(url, aoProgresso) {
   const controle = new AbortController();
   const limite = setTimeout(() => controle.abort(), LIMITE_LEITURA_SEI_MS_);
   try {
     const resposta = await fetch(url, { credentials: "same-origin", cache: "no-store", signal: controle.signal });
     if (!resposta.ok) throw new Error("O SEI respondeu com erro (HTTP " + resposta.status + ").");
-    const bytes = new Uint8Array(await resposta.arrayBuffer());
+    const bytes = await lerBytesComProgresso_(resposta, aoProgresso);
     const ehPdf = [0x25, 0x50, 0x44, 0x46, 0x2d].every((b, i) => bytes[i] === b); // "%PDF-"
     if (!ehPdf) throw new Error("O SEI não devolveu um PDF (sessão expirada?).");
     const disposicao = resposta.headers.get("content-disposition") || "";
@@ -3010,12 +3032,87 @@ const ESTILO_CARTAO_RECIBO_SEI_ = ESTILO_CARTAO_ACOMPANHAMENTO_ + `
   .situacao { font-size: 11.5px; margin-top: 1px; overflow-wrap: anywhere; }
   .pendente .situacao { color: #8a4b00; }
   .reanexar { margin-top: 5px; font-size: 11.5px; padding: 3px 9px; }
+  .anel { width: 16px; height: 16px; transform: rotate(-90deg); stroke-width: 2.6; }
+  .anel .fundo { stroke: #c9dbea; }
+  .anel .valor { stroke: #1c5a8a; transition: stroke-dashoffset .3s ease; }
+  .lendo .situacao { color: #1c5a8a; }
+  .pct { font-weight: 600; font-variant-numeric: tabular-nums; }
 `;
+
+/* Anel de progresso (2026-11-11, pedido do usuário): enquanto uma LE/OB é anexada, o
+ * cartão mostra um círculo se fechando e a porcentagem. Baixar do SEI tem progresso
+ * real (0-30%); a leitura no app não informa progresso, então essa etapa avança de
+ * forma estimada até 95% e só fecha em 100% quando o app confirma. */
+const CIRCUNFERENCIA_ANEL_ = 2 * Math.PI * 8;
+
+function anelProgressoSvg_(pct) {
+  const offset = CIRCUNFERENCIA_ANEL_ * (1 - Math.max(0, Math.min(100, pct)) / 100);
+  return `<svg class="anel" viewBox="0 0 20 20" aria-hidden="true"><circle class="fundo" cx="10" cy="10" r="8"/>` +
+    `<circle class="valor" cx="10" cy="10" r="8" stroke-dasharray="${CIRCUNFERENCIA_ANEL_.toFixed(2)}" stroke-dashoffset="${offset.toFixed(2)}"/></svg>`;
+}
+
+/** Atualiza só o anel e o texto do item (sem redesenhar o cartão); sem o item na tela, redesenha. */
+function atualizarProgressoItem_(item) {
+  const raiz = estadoReciboSei_.raiz;
+  const li = raiz && Array.from(raiz.querySelectorAll(".itens li")).find(l => l.dataset.doc === item.id);
+  const valor = li && li.querySelector(".anel .valor");
+  if (!valor) { pintarCartaoReciboSei_(); return; }
+  valor.setAttribute("stroke-dashoffset", (CIRCUNFERENCIA_ANEL_ * (1 - item.progresso / 100)).toFixed(2));
+  li.querySelector(".situacao").innerHTML = textoProgressoHtml_(item);
+}
+
+function textoProgressoHtml_(item) {
+  return `${item.etapa || "Processando"}… <span class="pct">${Math.round(item.progresso || 0)}%</span>`;
+}
+
+/**
+ * Baixa a LE/OB do SEI e manda ao app, com o anel andando em cada etapa. Usado na
+ * primeira anexação (sincronizarReciboSei_) e no "Anexar de novo". `vigente` diz se o
+ * cartão ainda é o da vez (a árvore pode ter recarregado no meio).
+ */
+async function processarItemReciboSei_(item, arvore, extras, vigente) {
+  const pintar = () => { if (!vigente || vigente()) atualizarProgressoItem_(item); };
+  item.lendo = true;
+  item.erro = "";
+  item.progresso = 0;
+  item.etapa = "Baixando do SEI";
+  if (!vigente || vigente()) pintarCartaoReciboSei_();
+  let estimativa = null;
+  try {
+    const pdf = await baixarPdfDaArvore_(item.url, fracao => { item.progresso = 2 + fracao * 28; pintar(); });
+    item.progresso = 32;
+    item.etapa = "Enviando ao app";
+    pintar();
+    estimativa = setInterval(() => {
+      item.etapa = "Lendo e anexando no app";
+      item.progresso = Math.min(95, item.progresso + (95 - item.progresso) * 0.05);
+      pintar();
+    }, 300);
+    const registro = await pedirAoAppGaocg_("anexarDocumentoSeiRecibo", Object.assign({
+      numero_processo: arvore.numeroProcesso, id_documento_sei: item.id, nome_arvore: item.nome,
+      arquivoNome: pdf.nome, arquivoBase64: pdf.base64
+    }, extras || {}));
+    clearInterval(estimativa);
+    estimativa = null;
+    item.progresso = 100;
+    item.etapa = "Concluído";
+    pintar();
+    await esperar_(350); // deixa ver o anel fechado antes de virar ✓
+    item.registro = registro;
+  } catch (erro) {
+    item.erro = String(erro && erro.message ? erro.message : erro);
+  } finally {
+    if (estimativa) clearInterval(estimativa);
+    item.lendo = false;
+    if (!vigente || vigente()) pintarCartaoReciboSei_();
+  }
+}
 
 function situacaoItemReciboSei_(item) {
   if (item.erro) return { classe: "pendente", marca: "!", texto: item.erro };
   const r = item.registro;
-  if (!r) return { classe: "lendo", marca: "…", texto: item.lendo ? "Lendo e conferindo no app…" : "Na fila" };
+  if (item.lendo) return { classe: "lendo", progresso: true };
+  if (!r) return { classe: "lendo", marca: "…", texto: "Na fila" };
   // Fica no cartão de vez (pedido do usuário, 2026-11-11): o app guarda o resultado, então reabrir o
   // processo mostra de novo onde cada documento foi parar.
   const onde = r.recibo_id + (r.recibo_descricao ? " (" + r.recibo_descricao + ")" : "");
@@ -3035,21 +3132,7 @@ function situacaoItemReciboSei_(item) {
 async function reanexarItemReciboSei_(item) {
   const arvore = estadoReciboSei_.arvore;
   if (!arvore || item.lendo) return;
-  item.lendo = true;
-  item.erro = "";
-  pintarCartaoReciboSei_();
-  try {
-    const pdf = await baixarPdfDaArvore_(item.url);
-    item.registro = await pedirAoAppGaocg_("anexarDocumentoSeiRecibo", {
-      numero_processo: arvore.numeroProcesso, id_documento_sei: item.id, nome_arvore: item.nome,
-      arquivoNome: pdf.nome, arquivoBase64: pdf.base64, reanexar: true
-    });
-  } catch (erro) {
-    item.erro = String(erro && erro.message ? erro.message : erro);
-  } finally {
-    item.lendo = false;
-    pintarCartaoReciboSei_();
-  }
+  await processarItemReciboSei_(item, arvore, { reanexar: true });
 }
 
 function pintarCartaoReciboSei_(aviso, ehErro) {
@@ -3079,9 +3162,11 @@ function pintarCartaoReciboSei_(aviso, ehErro) {
     const s = situacaoItemReciboSei_(item);
     const li = document.createElement("li");
     li.className = s.classe;
+    li.dataset.doc = item.id;
     const marca = document.createElement("span");
     marca.className = "marca";
-    marca.textContent = s.marca;
+    if (s.progresso) marca.innerHTML = anelProgressoSvg_(item.progresso || 0);
+    else marca.textContent = s.marca;
     const texto = document.createElement("div");
     texto.className = "texto";
     const doc = document.createElement("div");
@@ -3089,7 +3174,8 @@ function pintarCartaoReciboSei_(aviso, ehErro) {
     doc.textContent = nomeCurtoDocumentoSei_(item.nome);
     const situacao = document.createElement("div");
     situacao.className = "situacao";
-    situacao.textContent = s.texto;
+    if (s.progresso) situacao.innerHTML = textoProgressoHtml_(item);
+    else situacao.textContent = s.texto;
     texto.append(doc, situacao);
     if (s.reanexar) {
       const botao = document.createElement("button");
@@ -3136,21 +3222,7 @@ async function sincronizarReciboSei_(arvore) {
       if (!vigente()) return;
       if (!reciboSeiAtivo_) { e.interrompido = true; return; }
       if (item.registro && item.registro.final) continue;
-      item.lendo = true;
-      item.erro = "";
-      pintarCartaoReciboSei_();
-      try {
-        const pdf = await baixarPdfDaArvore_(item.url);
-        item.registro = await pedirAoAppGaocg_("anexarDocumentoSeiRecibo", {
-          numero_processo: arvore.numeroProcesso, id_documento_sei: item.id, nome_arvore: item.nome,
-          arquivoNome: pdf.nome, arquivoBase64: pdf.base64
-        });
-      } catch (erro) {
-        item.erro = String(erro && erro.message ? erro.message : erro);
-      } finally {
-        item.lendo = false;
-        if (vigente()) pintarCartaoReciboSei_();
-      }
+      await processarItemReciboSei_(item, arvore, null, vigente);
     }
   } finally {
     if (vigente()) e.execucao = null;
