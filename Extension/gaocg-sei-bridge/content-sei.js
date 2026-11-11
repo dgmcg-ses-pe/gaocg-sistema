@@ -3015,8 +3015,12 @@ function situacaoItemReciboSei_(item) {
   if (item.erro) return { classe: "pendente", marca: "!", texto: item.erro };
   const r = item.registro;
   if (!r) return { classe: "lendo", marca: "…", texto: item.lendo ? "Lendo e conferindo no app…" : "Na fila" };
-  if (r.resultado === "anexado") return { classe: "ok", marca: "✓", texto: "Anexada no recibo " + r.recibo_id };
-  if (r.resultado === "ja_estava") return { classe: "ok", marca: "✓", texto: "Já estava no recibo " + r.recibo_id };
+  // Fica no cartão de vez (pedido do usuário, 2026-11-11): o app guarda o resultado, então reabrir o
+  // processo mostra de novo onde cada documento foi parar.
+  const onde = r.recibo_id + (r.recibo_descricao ? " (" + r.recibo_descricao + ")" : "");
+  const nota = r.motivo ? " " + r.motivo : "";
+  if (r.resultado === "anexado") return { classe: "ok", marca: "✓", texto: "Anexada no recibo " + onde + "." + nota };
+  if (r.resultado === "ja_estava") return { classe: "ok", marca: "✓", texto: "Já estava no recibo " + onde + "." };
   if (r.resultado === "ignorado") return { classe: "ignorado", marca: "–", texto: r.motivo || "Não é LE nem OB." };
   return { classe: "pendente", marca: "!", texto: "Não anexada: " + (r.motivo || "precisa de conferência.") };
 }
