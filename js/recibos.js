@@ -1971,6 +1971,24 @@ const TelaRecibos = (function () {
     document.getElementById('btnSalvarRecEd').addEventListener('click', () => salvarReciboEdicao(recibo, seletorNe));
   }
 
+  /**
+   * O backend revê o PAGO quando os valores mudam (2026-11-11, pedido do usuário):
+   * pago diferente do liquidado tira do PAGO (volta ao status anterior); igual vira
+   * PAGO. Como o status não fica neste formulário, avisa o que mudou sozinho.
+   */
+  function avisarStatusRevisto_(statusAntes, resposta) {
+    const linhas = Array.isArray(resposta) ? resposta : (resposta ? [resposta] : []);
+    linhas.forEach(r => {
+      if (!r || !r.id || !(r.id in statusAntes)) return;
+      const antes = statusAntes[r.id];
+      if ((r.status || '') === antes) return;
+      const parcela = r.percentual_parcela_dividida ? ` (${r.percentual_parcela_dividida}%)` : '';
+      UI.toast(r.status === 'PAGO'
+        ? `Recibo ${r.id}${parcela} marcado como PAGO: valor pago igual ao liquidado.`
+        : `Recibo ${r.id}${parcela} saiu de "${antes}" para "${r.status}": valor pago diferente do liquidado.`, 'info');
+    });
+  }
+
   async function salvarReciboEdicao(recibo, seletorNe) {
     // Nada mudou (sessão 2026-08-13, pedido do usuário): só fecha o card em
     // vez de validar + chamar o backend à toa - mesmo dirty-tracking que já
@@ -1983,6 +2001,12 @@ const TelaRecibos = (function () {
     if (!UI.validarCamposMoeda()) return;
     const erroNe = seletorNe.validar();
     if (erroNe) { UI.mostrarErro(erroEl, erroNe); return; }
+    // Status de cada linha antes de salvar - o backend pode revê-lo (statusPorPagamento_,
+    // Recibos.gs) e avisarStatusRevisto_ conta isso ao usuário.
+    const statusAntes = {};
+    itens.forEach(r => { statusAntes[r.id] = r.status || ''; });
+    statusAntes[recibo.id] = recibo.status || '';
+    let respostaSalvar = null;
     const dados = {
       oss_snapshot: document.getElementById('recEdOss').value.trim(),
       cnpj_snapshot: document.getElementById('recEdCnpj').value.trim(),
@@ -2034,7 +2058,7 @@ const TelaRecibos = (function () {
           parcela.ordens_bancarias = montarPayloadOrdensBancarias_(div);
           return parcela;
         }));
-        await Api.chamar('atualizarParcelasDivididasRecibo', { id: recibo.id, dadosBase: dados, parcelas });
+        respostaSalvar = await Api.chamar('atualizarParcelasDivididasRecibo', { id: recibo.id, dadosBase: dados, parcelas });
       } else {
         const inputNl = document.getElementById('recEdNotaLiquidacaoArquivo');
         const inputOb = document.getElementById('recEdOrdemBancariaArquivo');
@@ -2049,7 +2073,7 @@ const TelaRecibos = (function () {
         const ob = await lerAnexoDoInput_(inputOb);
         if (ob) Object.assign(dados, { ordemBancariaArquivoBase64: ob.base64, ordemBancariaArquivoNome: ob.nome, ordemBancariaArquivoTipo: ob.tipo });
 
-        await Api.chamar('atualizarRecibo', { id: recibo.id, data: dados });
+        respostaSalvar = await Api.chamar('atualizarRecibo', { id: recibo.id, data: dados });
       }
       if (observacaoNova) {
         const refIdObservacoes = recibo.parcela_dividida_grupo_id || recibo.id;
@@ -2057,6 +2081,7 @@ const TelaRecibos = (function () {
       }
       CacheAbas.invalidar('recibos');
       UI.toast('Recibo atualizado com sucesso.', 'sucesso');
+      avisarStatusRevisto_(statusAntes, respostaSalvar);
       UI.fecharModal();
       await carregar();
     } catch (err) {

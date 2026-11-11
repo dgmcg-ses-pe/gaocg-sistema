@@ -3009,6 +3009,7 @@ const ESTILO_CARTAO_RECIBO_SEI_ = ESTILO_CARTAO_ACOMPANHAMENTO_ + `
   .doc { font-size: 12.5px; font-weight: 600; overflow-wrap: anywhere; }
   .situacao { font-size: 11.5px; margin-top: 1px; overflow-wrap: anywhere; }
   .pendente .situacao { color: #8a4b00; }
+  .reanexar { margin-top: 5px; font-size: 11.5px; padding: 3px 9px; }
 `;
 
 function situacaoItemReciboSei_(item) {
@@ -3022,7 +3023,33 @@ function situacaoItemReciboSei_(item) {
   if (r.resultado === "anexado") return { classe: "ok", marca: "✓", texto: "Anexada no recibo " + onde + "." + nota };
   if (r.resultado === "ja_estava") return { classe: "ok", marca: "✓", texto: "Já estava no recibo " + onde + "." };
   if (r.resultado === "ignorado") return { classe: "ignorado", marca: "–", texto: r.motivo || "Não é LE nem OB." };
+  // Conferido no app a cada abertura do processo (2026-11-11): apagada do recibo no app.
+  // Não reanexa sozinha - a remoção pode ter sido de propósito -, só oferece o botão.
+  if (r.resultado === "removido") {
+    return { classe: "pendente", marca: "!", texto: r.motivo || "Foi removida do recibo no app.", reanexar: true };
+  }
   return { classe: "pendente", marca: "!", texto: "Não anexada: " + (r.motivo || "precisa de conferência.") };
+}
+
+/** Botão "Anexar de novo": baixa o PDF de novo e pede ao app para reanexar (só vale se saiu mesmo do recibo). */
+async function reanexarItemReciboSei_(item) {
+  const arvore = estadoReciboSei_.arvore;
+  if (!arvore || item.lendo) return;
+  item.lendo = true;
+  item.erro = "";
+  pintarCartaoReciboSei_();
+  try {
+    const pdf = await baixarPdfDaArvore_(item.url);
+    item.registro = await pedirAoAppGaocg_("anexarDocumentoSeiRecibo", {
+      numero_processo: arvore.numeroProcesso, id_documento_sei: item.id, nome_arvore: item.nome,
+      arquivoNome: pdf.nome, arquivoBase64: pdf.base64, reanexar: true
+    });
+  } catch (erro) {
+    item.erro = String(erro && erro.message ? erro.message : erro);
+  } finally {
+    item.lendo = false;
+    pintarCartaoReciboSei_();
+  }
 }
 
 function pintarCartaoReciboSei_(aviso, ehErro) {
@@ -3064,6 +3091,14 @@ function pintarCartaoReciboSei_(aviso, ehErro) {
     situacao.className = "situacao";
     situacao.textContent = s.texto;
     texto.append(doc, situacao);
+    if (s.reanexar) {
+      const botao = document.createElement("button");
+      botao.type = "button";
+      botao.className = "secundario reanexar";
+      botao.textContent = "Anexar de novo";
+      botao.addEventListener("click", () => reanexarItemReciboSei_(item));
+      texto.appendChild(botao);
+    }
     li.append(marca, texto);
     lista.appendChild(li);
   }
