@@ -1172,6 +1172,25 @@ const TelaRecibos = (function () {
     return true;
   }
 
+  /**
+   * Competência da Ordem Bancária contra a do Recibo (2026-11-11, pedido do
+   * usuário: dava para anexar uma OB de outro mês). Diferente bloqueia - o
+   * backend já recusa ao receber competenciaEsperada (lerAnexoRecibo), aqui é a
+   * mesma regra por segurança. Sem competência legível na OB, só avisa; o
+   * Recibo sem competência continua sendo preenchido pela LE, não pela OB.
+   */
+  function confirmarLeituraOb_(resultado, ctx) {
+    const selectCompetencia = document.getElementById(ctx.competenciaId);
+    const competenciaRecibo = selectCompetencia ? selectCompetencia.value.trim() : '';
+    const competenciaOb = resultado.competencia || '';
+    if (competenciaOb && competenciaRecibo && competenciaOb !== competenciaRecibo) {
+      UI.toast(`A competência da Ordem Bancária (${competenciaOb}) não corresponde à competência do Recibo (${competenciaRecibo}).`, 'erro');
+      return false;
+    }
+    if (!competenciaOb) UI.toast('Não foi possível identificar a competência na Ordem Bancária - confira manualmente.', 'info');
+    return true;
+  }
+
   // ===================== NOVO RECIBO (com ou sem parcela dividida) =====================
 
   async function abrirFormularioNovo() {
@@ -1334,7 +1353,9 @@ const TelaRecibos = (function () {
     });
     ligarAnexoComOcr_({
       inputEl: document.getElementById('recOrdemBancariaArquivo'), tipo: 'ordem_bancaria',
-      obterNotaEmpenho: obterNotaEmpenhoNovo_, valorInputEl: document.getElementById('recValorPago')
+      obterNotaEmpenho: obterNotaEmpenhoNovo_, valorInputEl: document.getElementById('recValorPago'),
+      conferirLeitura: resultado => confirmarLeituraOb_(resultado, ctxNovo),
+      obterCompetencia: ctxNovo.obterCompetencia
     });
   }
 
@@ -1502,12 +1523,14 @@ const TelaRecibos = (function () {
         if (arquivo.size > 8 * 1024 * 1024) throw new Error('Arquivo muito grande (máximo 8MB).');
         const base64 = await UI.lerArquivoBase64(arquivo);
         const resultado = await Api.chamar('lerAnexoRecibo', {
-          tipo: 'ordem_bancaria', arquivoBase64: base64, arquivoNome: arquivo.name, arquivoTipo: arquivo.type, notaEmpenhoEsperada: notaEmpenho
+          tipo: 'ordem_bancaria', arquivoBase64: base64, arquivoNome: arquivo.name, arquivoTipo: arquivo.type, notaEmpenhoEsperada: notaEmpenho,
+          competenciaEsperada: ctx.obterCompetencia()
         });
         if (resultado.numero_documento && numerosDocumentosAnexadosNaTela_(containerId).numerosOb.has(resultado.numero_documento)) {
           UI.toast('A Ordem Bancária nº ' + resultado.numero_documento + ' já foi anexada a este processo.', 'erro');
           return;
         }
+        if (!confirmarLeituraOb_(resultado, ctx)) return;
         div._ordensBancarias.push({
           numero_ob: resultado.numero_documento || '', valor: resultado.valor,
           _base64: base64, _nome: arquivo.name, _tipo: arquivo.type
@@ -1914,7 +1937,9 @@ const TelaRecibos = (function () {
     if (recibo.nota_liquidacao_url) anexoNl.travar(recibo.valor_liquidado, true, recibo.nota_liquidacao_numero);
     const anexoOb = ligarAnexoComOcr_({
       inputEl: document.getElementById('recEdOrdemBancariaArquivo'), tipo: 'ordem_bancaria',
-      obterNotaEmpenho: obterNotaEmpenhoEd_, valorInputEl: document.getElementById('recEdValorPago')
+      obterNotaEmpenho: obterNotaEmpenhoEd_, valorInputEl: document.getElementById('recEdValorPago'),
+      conferirLeitura: resultado => confirmarLeituraOb_(resultado, ctxEd),
+      obterCompetencia: ctxEd.obterCompetencia
     });
     if (recibo.ordem_bancaria_arquivo_url) anexoOb.travar(recibo.valor_pago, true);
 

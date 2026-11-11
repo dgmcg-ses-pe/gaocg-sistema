@@ -339,7 +339,10 @@ async function consultarNumeroSofCapturado_(numeroProcesso) {
  */
 const URL_API_GAOCG_ = "https://script.google.com/macros/s/AKfycbzbLozyF4h0HLbCeJdWyj1skAmxgrUhjV17FvKzXKVqF9l3gIAnS6ufmvj-PvjAOv4ZTg/exec";
 const CHAVE_SESSAO_GAOCG_ = "sessaoGaocg";
-const ACOES_DOCUMENTOS_GAOCG_ = ["listarDocumentosProcesso", "baixarDocumentoProcesso"];
+// documentosSeiProcessados/anexarDocumentoSeiRecibo (2026-11-11): LE/OB do processo anexadas
+// sozinhas no Recibo (ReciboSei.gs). A segunda grava, mas é idempotente por documento do SEI
+// no backend, então o retry de postarNoAppGaocg_ não anexa duas vezes.
+const ACOES_DOCUMENTOS_GAOCG_ = ["listarDocumentosProcesso", "baixarDocumentoProcesso", "documentosSeiProcessados", "anexarDocumentoSeiRecibo"];
 const ESPERAS_API_GAOCG_MS_ = [800, 2500];
 
 async function guardarSessaoGaocg_(token) {
@@ -347,7 +350,7 @@ async function guardarSessaoGaocg_(token) {
   else await chrome.storage.session.remove(CHAVE_SESSAO_GAOCG_);
 }
 
-/** Só ações de leitura passam por aqui, então repetir é seguro: a primeira chamada costuma pegar o script frio. */
+/** Repetir é seguro (leituras, e a única escrita é idempotente): a primeira chamada costuma pegar o script frio. */
 async function postarNoAppGaocg_(corpo) {
   for (let tentativa = 0; ; tentativa++) {
     try {

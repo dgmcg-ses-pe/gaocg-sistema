@@ -2924,6 +2924,271 @@ function garantirCartaoAcompanhamento_() {
   if (link) montarCartaoAcompanhamento_(doc, link);
 }
 
+/* ============== LE/OB do processo anexadas sozinhas no Recibo do app ==============
+ *
+ * Fase 1 do pedido de 2026-11-11: ao abrir um processo, cada PDF da árvore que parece
+ * Nota de Liquidação ou Ordem Bancária é baixado (sessão do SEI de quem está logado) e
+ * enviado ao app, que lê o documento, acha o Recibo pela NE + competência e anexa
+ * quando não há dúvida (ReciboSei.gs). O app guarda o que já viu de cada documento,
+ * então reabrir o processo só manda o que ainda não foi resolvido.
+ *
+ * A árvore vem dos scripts `Nos[i] = new infraArvoreNo(...)` do iframe da árvore -
+ * confirmado ao vivo em 2026-11-11: documento externo traz `Nos[i].src` apontando para
+ * documento_download_anexo, que devolve o PDF direto. Pasta recolhida não traz os
+ * documentos (só um nó AGUARDE), então só entra o que estiver nas pastas abertas.
+ */
+
+const ID_CARTAO_RECIBO_SEI_ = "gaocgCartaoReciboSei";
+const CHAVE_RECIBO_SEI_MINIMIZADO_ = "gaocgReciboSeiMinimizado";
+const REGEX_NOME_LE_OB_ = /ordem\s+banc|nota\s+de\s+liquida|\d{4}\s*(?:LE|OB)\s*\d{6}|\b(?:LE|OB)\s*n?[ºo°]?\s*\d{3,6}\b/i;
+const estadoReciboSei_ = { raiz: null, chave: "", execucao: null, arvore: null, interrompido: false, itens: [] };
+
+function textoDosScriptsDaArvore_(doc) {
+  return Array.from(doc.querySelectorAll("script")).map(s => s.textContent || "").join("\n");
+}
+
+/** Processo e documentos externos (PDF) carregados na árvore. */
+function documentosDaArvoreSei_(doc) {
+  const texto = textoDosScriptsDaArvore_(doc);
+  const processo = /new infraArvoreNo\("PROCESSO","(\d+)",[^,]*,"[^"]*",(?:"[^"]*"|null),"([^"]*)"/.exec(texto);
+  if (!processo) return null;
+  const fontes = {};
+  const reSrc = /Nos\[(\d+)\]\.src\s*=\s*'([^']*)'/g;
+  let s;
+  while ((s = reSrc.exec(texto))) fontes[s[1]] = s[2];
+  const documentos = [];
+  const reNo = /Nos\[(\d+)\]\s*=\s*new infraArvoreNo\("DOCUMENTO","(\d+)","[^"]*",(?:"[^"]*"|null),(?:"[^"]*"|null),"([^"]*)"/g;
+  let m;
+  while ((m = reNo.exec(texto))) {
+    const src = fontes[m[1]] || "";
+    if (!/acao=documento_download_anexo/.test(src)) continue;
+    documentos.push({ id: m[2], nome: m[3], url: new URL(src, doc.baseURI || doc.location.href).href });
+  }
+  return { idProcesso: processo[1], numeroProcesso: processo[2], documentos: documentos };
+}
+
+function nomeCurtoDocumentoSei_(nome) {
+  return String(nome || "").replace(/\s*\(\d+\)\s*$/, "").trim();
+}
+
+function bytesParaBase64_(bytes) {
+  let binario = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binario += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(binario);
+}
+
+async function baixarPdfDaArvore_(url) {
+  const controle = new AbortController();
+  const limite = setTimeout(() => controle.abort(), LIMITE_LEITURA_SEI_MS_);
+  try {
+    const resposta = await fetch(url, { credentials: "same-origin", cache: "no-store", signal: controle.signal });
+    if (!resposta.ok) throw new Error("O SEI respondeu com erro (HTTP " + resposta.status + ").");
+    const bytes = new Uint8Array(await resposta.arrayBuffer());
+    const ehPdf = [0x25, 0x50, 0x44, 0x46, 0x2d].every((b, i) => bytes[i] === b); // "%PDF-"
+    if (!ehPdf) throw new Error("O SEI não devolveu um PDF (sessão expirada?).");
+    const disposicao = resposta.headers.get("content-disposition") || "";
+    const nome = (/filename="([^"]+)"/.exec(disposicao) || [])[1] || "documento.pdf";
+    return { base64: bytesParaBase64_(bytes), nome: nome };
+  } catch (e) {
+    if (e && e.name === "AbortError") throw new Error("O SEI demorou demais para entregar o PDF.");
+    throw e;
+  } finally {
+    clearTimeout(limite);
+  }
+}
+
+const ESTILO_CARTAO_RECIBO_SEI_ = ESTILO_CARTAO_ACOMPANHAMENTO_ + `
+  .itens { list-style: none; margin: 0; padding: 0; }
+  .itens li { display: flex; gap: 7px; align-items: flex-start; padding: 6px 0; border-bottom: 1px solid #d7e4ef; }
+  .itens li:last-child { border-bottom: 0; }
+  .marca { flex: none; width: 16px; text-align: center; font-weight: 700; }
+  .ok .marca { color: #1e7b3c; }
+  .pendente .marca { color: #a35d00; }
+  .lendo .marca, .ignorado .marca { color: #5a6f82; }
+  .texto { min-width: 0; }
+  .doc { font-size: 12.5px; font-weight: 600; overflow-wrap: anywhere; }
+  .situacao { font-size: 11.5px; margin-top: 1px; overflow-wrap: anywhere; }
+  .pendente .situacao { color: #8a4b00; }
+`;
+
+function situacaoItemReciboSei_(item) {
+  if (item.erro) return { classe: "pendente", marca: "!", texto: item.erro };
+  const r = item.registro;
+  if (!r) return { classe: "lendo", marca: "…", texto: item.lendo ? "Lendo e conferindo no app…" : "Na fila" };
+  if (r.resultado === "anexado") return { classe: "ok", marca: "✓", texto: "Anexada no recibo " + r.recibo_id };
+  if (r.resultado === "ja_estava") return { classe: "ok", marca: "✓", texto: "Já estava no recibo " + r.recibo_id };
+  if (r.resultado === "ignorado") return { classe: "ignorado", marca: "–", texto: r.motivo || "Não é LE nem OB." };
+  return { classe: "pendente", marca: "!", texto: "Não anexada: " + (r.motivo || "precisa de conferência.") };
+}
+
+function pintarCartaoReciboSei_(aviso, ehErro) {
+  const raiz = estadoReciboSei_.raiz;
+  if (!raiz) return;
+  const corpo = raiz.querySelector(".corpo");
+  corpo.textContent = "";
+  if (aviso) {
+    const el = document.createElement("div");
+    el.className = "aviso" + (ehErro ? " erro" : "");
+    el.textContent = aviso;
+    corpo.appendChild(el);
+  }
+  const visiveis = estadoReciboSei_.itens.filter(i => !(i.registro && i.registro.resultado === "ignorado"));
+  if (!visiveis.length) {
+    if (!aviso) {
+      const el = document.createElement("div");
+      el.className = "aviso";
+      el.textContent = "Nenhuma LE ou OB nas pastas abertas.";
+      corpo.appendChild(el);
+    }
+    return;
+  }
+  const lista = document.createElement("ul");
+  lista.className = "itens";
+  for (const item of visiveis) {
+    const s = situacaoItemReciboSei_(item);
+    const li = document.createElement("li");
+    li.className = s.classe;
+    const marca = document.createElement("span");
+    marca.className = "marca";
+    marca.textContent = s.marca;
+    const texto = document.createElement("div");
+    texto.className = "texto";
+    const doc = document.createElement("div");
+    doc.className = "doc";
+    doc.textContent = nomeCurtoDocumentoSei_(item.nome);
+    const situacao = document.createElement("div");
+    situacao.className = "situacao";
+    situacao.textContent = s.texto;
+    texto.append(doc, situacao);
+    li.append(marca, texto);
+    lista.appendChild(li);
+  }
+  corpo.appendChild(lista);
+}
+
+/**
+ * Cada chamada vira a execução da vez (e.execucao): a anterior para no próximo documento.
+ * Acontece quando a árvore recarrega (novo cartão) ou quando o botão do painel é religado.
+ */
+async function sincronizarReciboSei_(arvore) {
+  const e = estadoReciboSei_;
+  const execucao = {};
+  e.execucao = execucao;
+  e.arvore = arvore;
+  e.interrompido = false;
+  const vigente = () => e.execucao === execucao;
+  try {
+    pintarCartaoReciboSei_("Conferindo com o app GAOCG…");
+    let vistos = [];
+    try {
+      vistos = await pedirAoAppGaocg_("documentosSeiProcessados", { numero_processo: arvore.numeroProcesso });
+    } catch (erro) {
+      if (vigente()) pintarCartaoReciboSei_(String(erro && erro.message ? erro.message : erro), true);
+      return;
+    }
+    if (!vigente()) return;
+    const porId = {};
+    (vistos || []).forEach(v => { porId[String(v.id_documento_sei)] = v; });
+    // Um resultado final já conhecido nesta página vale mesmo que a lista do app venha atrasada.
+    e.itens.forEach(item => { item.registro = porId[item.id] || (item.registro && item.registro.final ? item.registro : null); });
+    pintarCartaoReciboSei_();
+
+    for (const item of e.itens) {
+      if (!vigente()) return;
+      if (!reciboSeiAtivo_) { e.interrompido = true; return; }
+      if (item.registro && item.registro.final) continue;
+      item.lendo = true;
+      item.erro = "";
+      pintarCartaoReciboSei_();
+      try {
+        const pdf = await baixarPdfDaArvore_(item.url);
+        item.registro = await pedirAoAppGaocg_("anexarDocumentoSeiRecibo", {
+          numero_processo: arvore.numeroProcesso, id_documento_sei: item.id, nome_arvore: item.nome,
+          arquivoNome: pdf.nome, arquivoBase64: pdf.base64
+        });
+      } catch (erro) {
+        item.erro = String(erro && erro.message ? erro.message : erro);
+      } finally {
+        item.lendo = false;
+        if (vigente()) pintarCartaoReciboSei_();
+      }
+    }
+  } finally {
+    if (vigente()) e.execucao = null;
+  }
+}
+
+function montarCartaoReciboSei_(doc, arvore) {
+  const hospedeiro = doc.createElement("div");
+  hospedeiro.id = ID_CARTAO_RECIBO_SEI_;
+  const raiz = hospedeiro.attachShadow({ mode: "open" });
+  raiz.innerHTML = `
+    <style>${ESTILO_CARTAO_RECIBO_SEI_}</style>
+    <section class="cartao" aria-label="LE e OB no recibo do GAOCG">
+      <header class="cabecalho">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m9 14 2 2 4-4"/></svg>
+        <span class="titulo">GAOCG · LE/OB no recibo</span>
+        <button type="button" class="icone seta" title="Minimizar" aria-label="Minimizar">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>
+        </button>
+      </header>
+      <div class="corpo" role="status"></div>
+    </section>
+  `;
+  const cartao = raiz.querySelector(".cartao");
+  const seta = raiz.querySelector(".seta");
+  const aplicarMinimizado = minimizado => {
+    cartao.classList.toggle("minimizado", minimizado);
+    const rotulo = minimizado ? "Expandir" : "Minimizar";
+    seta.title = rotulo;
+    seta.setAttribute("aria-label", rotulo);
+  };
+  aplicarMinimizado(cartaoMinimizado_(CHAVE_RECIBO_SEI_MINIMIZADO_));
+  seta.addEventListener("click", () => {
+    const minimizado = !cartao.classList.contains("minimizado");
+    aplicarMinimizado(minimizado);
+    guardarCartaoMinimizado_(CHAVE_RECIBO_SEI_MINIMIZADO_, minimizado);
+  });
+
+  const referencia = doc.getElementById(ID_CARTAO_ACOMPANHAMENTO_) || doc.getElementById(ID_CARTAO_ANOTACAO_) || pontoDosCartoes_(doc);
+  if (referencia && referencia.parentNode) referencia.parentNode.insertBefore(hospedeiro, referencia.nextSibling);
+  else doc.body.appendChild(hospedeiro);
+
+  const chave = arvore.idProcesso + ":" + arvore.documentos.map(d => d.id).join(",");
+  const anteriores = estadoReciboSei_.chave.split(":")[0] === arvore.idProcesso ? estadoReciboSei_.itens : [];
+  estadoReciboSei_.raiz = raiz;
+  estadoReciboSei_.chave = chave;
+  estadoReciboSei_.itens = arvore.documentos.map(d => {
+    const antes = anteriores.find(a => a.id === d.id);
+    return { id: d.id, nome: d.nome, url: d.url, registro: antes ? antes.registro : null, erro: "", lendo: false };
+  });
+  pintarCartaoReciboSei_();
+  sincronizarReciboSei_(arvore);
+}
+
+/** Roda a cada segundo, junto dos outros cartões: só aparece em processo com LE/OB na árvore. */
+function garantirCartaoReciboSei_() {
+  const area = acharAreaArvore_();
+  let doc = null;
+  try { doc = area && (area.contentDocument || area.ownerDocument); } catch (e) { doc = null; }
+  if (!doc || !doc.body || doc.readyState === "loading") return;
+
+  const existente = doc.getElementById(ID_CARTAO_RECIBO_SEI_);
+  if (existente) {
+    existente.style.display = reciboSeiAtivo_ ? "" : "none";
+    // Desligado no meio da conferência e religado: retoma de onde parou.
+    if (reciboSeiAtivo_ && estadoReciboSei_.interrompido && !estadoReciboSei_.execucao && estadoReciboSei_.arvore) {
+      sincronizarReciboSei_(estadoReciboSei_.arvore);
+    }
+    return;
+  }
+  if (!reciboSeiAtivo_) return;
+  const arvore = documentosDaArvoreSei_(doc);
+  if (!arvore) return;
+  arvore.documentos = arvore.documentos.filter(d => REGEX_NOME_LE_OB_.test(d.nome));
+  if (arvore.documentos.length) montarCartaoReciboSei_(doc, arvore);
+}
+
 /* ============ liga/desliga das janelas de anexo e anotação (popup) ============
  *
  * 2026-10-15, pedido do usuário: o painel da extensão (popup.html/popup.js) tem
@@ -2942,14 +3207,18 @@ function garantirCartaoAcompanhamento_() {
 const CHAVE_FERRAMENTAS_SEI_ = "ferramentasSeiAtivas";
 const CHAVE_ANOTACAO_SEI_ = "anotacaoSeiAtiva";
 const CHAVE_ACOMPANHAMENTO_SEI_ = "acompanhamentoSeiAtivo";
+// LE/OB do processo anexadas sozinhas no Recibo do app (2026-11-11). Ausente = ativo.
+const CHAVE_RECIBO_SEI_ = "reciboSeiAtivo";
 let ferramentasSeiAtivas_ = true;
 let anotacaoSeiAtiva_ = true;
 let acompanhamentoSeiAtivo_ = true;
+let reciboSeiAtivo_ = true;
 
 function lerPreferenciasFerramentas_(dados) {
   ferramentasSeiAtivas_ = dados[CHAVE_FERRAMENTAS_SEI_] !== false;
   anotacaoSeiAtiva_ = (CHAVE_ANOTACAO_SEI_ in dados) ? dados[CHAVE_ANOTACAO_SEI_] !== false : ferramentasSeiAtivas_;
   acompanhamentoSeiAtivo_ = dados[CHAVE_ACOMPANHAMENTO_SEI_] !== false;
+  reciboSeiAtivo_ = dados[CHAVE_RECIBO_SEI_] !== false;
   configAnexo_ = {
     tipoDocumento: String(dados[CHAVE_ANEXO_TIPO_] || "").trim() || "Anexo",
     nivelAcesso: (dados[CHAVE_ANEXO_NIVEL_] in MAPA_NIVEL_ACESSO) ? dados[CHAVE_ANEXO_NIVEL_] : "publico",
@@ -2959,7 +3228,7 @@ function lerPreferenciasFerramentas_(dados) {
 
 async function carregarPreferenciaFerramentas_() {
   try {
-    lerPreferenciasFerramentas_(await chrome.storage.local.get([CHAVE_FERRAMENTAS_SEI_, CHAVE_ANOTACAO_SEI_, CHAVE_ACOMPANHAMENTO_SEI_, CHAVE_ANEXO_TIPO_, CHAVE_ANEXO_NIVEL_, CHAVE_ANEXO_TIPO_PELO_NOME_]));
+    lerPreferenciasFerramentas_(await chrome.storage.local.get([CHAVE_FERRAMENTAS_SEI_, CHAVE_ANOTACAO_SEI_, CHAVE_ACOMPANHAMENTO_SEI_, CHAVE_RECIBO_SEI_, CHAVE_ANEXO_TIPO_, CHAVE_ANEXO_NIVEL_, CHAVE_ANEXO_TIPO_PELO_NOME_]));
   } catch (e) { ferramentasSeiAtivas_ = true; anotacaoSeiAtiva_ = true; }
   return ferramentasSeiAtivas_;
 }
@@ -2967,6 +3236,7 @@ async function carregarPreferenciaFerramentas_() {
 function garantirCartoesDaArvore_() {
   garantirCartaoAnotacao_();
   garantirCartaoAcompanhamento_();
+  garantirCartaoReciboSei_();
 }
 
 function aplicarVisibilidadeFerramentas_() {
@@ -3072,7 +3342,7 @@ if (window.top === window) {
       iniciarVigilancia_();
     }
     // Botão do painel da extensão: vale na hora para esta aba.
-    if (area === "local" && (mudancas[CHAVE_FERRAMENTAS_SEI_] || mudancas[CHAVE_ANOTACAO_SEI_] || mudancas[CHAVE_ACOMPANHAMENTO_SEI_] || mudancas[CHAVE_ANEXO_TIPO_] || mudancas[CHAVE_ANEXO_NIVEL_] || mudancas[CHAVE_ANEXO_TIPO_PELO_NOME_])) {
+    if (area === "local" && (mudancas[CHAVE_FERRAMENTAS_SEI_] || mudancas[CHAVE_ANOTACAO_SEI_] || mudancas[CHAVE_ACOMPANHAMENTO_SEI_] || mudancas[CHAVE_RECIBO_SEI_] || mudancas[CHAVE_ANEXO_TIPO_] || mudancas[CHAVE_ANEXO_NIVEL_] || mudancas[CHAVE_ANEXO_TIPO_PELO_NOME_])) {
       // Relê as duas juntas: a anotação pode herdar a chave de anexos (migração).
       carregarPreferenciaFerramentas_().then(aplicarVisibilidadeFerramentas_);
     }
