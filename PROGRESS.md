@@ -3223,6 +3223,14 @@ Pedido do usuário: mostrar o nome do usuário em vez do código na coluna Usuá
 
 **Testado:** `listarLogAuditoria` real em Node (Gerente vê nomes de todos, Analista só o próprio, id sem cadastro sem nome) e a tabela no app em localhost com dados simulados. **Não testado:** dados reais.
 
+## LE/OB sem NE não são anexadas pela extensão (sessão 2026-11-12, só backend)
+
+- **Antes de editar:** o clone local do repositório privado `/backend` estava parado na versão 115. As versões 116-120 (até `9b12862`) já estavam no GitHub, e foi preciso um `git fetch` + rebase. Commit `51bf6c8`, ainda não enviado.
+- **Pedido do usuário:** se a LE ou a OB não traz NE, a extensão não anexa. Isso desfaz a regra de 2026-11-11, que aceitava OB sem NE (ex.: provisão com "EMPENHO: ******") e achava o recibo pelo processo, contrato ou unidade. Em `ReciboSei.gs`, `lerDocumentoSei_` recusa qualquer documento sem NE, e `processarDocumentoSeiRecibo_` faz a mesma checagem quando reaproveita uma leitura gravada antes. O documento fica "pendente" com o motivo "OB sem NE não é anexada". As OBs sem NE que já foram anexadas continuam nos recibos.
+- **Status x pagamento:** conferido, sem mudança de código. A regra das versões 119 e 120 (`statusPorPagamento_`, `Recibos.gs`) já cobre o pedido. Quando o pago fica igual ao liquidado, o status vai para PAGO. Ao apagar uma LE ou OB pela lixeira e salvar, o valor muda e o status volta ao anterior (pelo Log de Auditoria) ou, sem registro, ao "ENVIADO AO SETOR DE PAGAMENTO" da fonte.
+
+**Testado:** os `.gs` reais em Node, com planilha simulada. Cenários: recibo avulso com OB anexada e depois apagada, LE apagada, pago parcial, troca manual de status, recibo sem registro no log, parcela dividida com duas OBs e depois uma apagada, OB sem NE na leitura nova e na leitura reaproveitada. **Não testado:** Apps Script, SEI e dados reais.
+
 ## Referências úteis
 - Repositório: `https://github.com/AndersonG2021/APP-GAOCG.git`, branch `main`, publicado via GitHub Pages.
 - Backend roda só no Apps Script; **sempre que um `.gs` mudar, colar manualmente, reimplantar (Implantar → Gerenciar implantações → editar → Nova versão) E atualizar a cópia correspondente em `/backend` neste repositório**, no mesmo commit.
