@@ -1197,7 +1197,7 @@ const TelaRecibos = (function () {
               <option value="">Selecione...</option>
               ${opcoesObjeto.map(o => `<option>${UI.escaparHtml(o.valor)}</option>`).join('')}
             </select>
-            <p class="ajuda">Escolhendo um objeto já usado antes para essa unidade, os campos abaixo são preenchidos com o último lançamento (ou, se ainda não houver Recibo, com a Fonte/Nota de Empenho/Parcela já cadastradas na SOF).</p>
+            <p class="ajuda">Ao escolher o objeto, a Parcela Contratual vem da "Parcela Mensal" da SOF desse objeto. Os demais campos vêm do último lançamento (ou, se ainda não houver Recibo, da Fonte/Nota de Empenho cadastradas na SOF).</p>
           </div>
           <div class="campo"><label>Contrato de Gestão</label><input id="recContratoGestao" /></div>
           <div class="campo"><label>Parcela Contratual</label><input id="recParcelaContratual" type="text" inputmode="decimal" class="campo-moeda" /></div>
@@ -1291,21 +1291,23 @@ const TelaRecibos = (function () {
     document.getElementById('recObjeto').addEventListener('change', async function () {
       const objeto = this.value.trim();
       const ultimoLancamento = historicoRecibosUnidade.find(r => (r.objeto || '').trim().toLowerCase() === objeto.toLowerCase());
+      const objetoSof = objetosSofDaUnidadeNovo.find(o => (o.objeto || '').trim().toLowerCase() === objeto.toLowerCase());
       if (ultimoLancamento) {
         document.getElementById('recContratoGestao').value = ultimoLancamento.contrato_gestao || '';
-        document.getElementById('recParcelaContratual').value = ultimoLancamento.parcela_contratual || '';
         document.getElementById('recFonte').value = ultimoLancamento.fonte || '';
-      } else {
+      } else if (objetoSof) {
         // Sem Recibo lançado antes pra esse Objeto (sessão 2026-07-30) - cai
         // pro SOF/NE já cadastrados pra essa unidade+objeto, se existirem
         // (ver listarObjetosSofPorUnidade). É só um ponto de partida: os campos
         // continuam editáveis, e a NE continua limitada à lista do Objeto.
-        const objetoSof = objetosSofDaUnidadeNovo.find(o => (o.objeto || '').trim().toLowerCase() === objeto.toLowerCase());
-        if (objetoSof) {
-          document.getElementById('recParcelaContratual').value = objetoSof.parcela_mensal || '';
-          document.getElementById('recFonte').value = objetoSof.fonte || '';
-        }
+        document.getElementById('recFonte').value = objetoSof.fonte || '';
       }
+      // Parcela Contratual = "Parcela Mensal" da SOF mais recente do Objeto (2026-11-12,
+      // pedido do usuário), mesmo que já exista Recibo dele. Sem SOF com parcela para
+      // o Objeto, vale a do último Recibo; sem nenhum dos dois, fica em branco.
+      const parcelaSof = objetoSof ? Number(objetoSof.parcela_mensal) || 0 : 0;
+      const parcela = parcelaSof || (ultimoLancamento && Number(ultimoLancamento.parcela_contratual)) || 0;
+      document.getElementById('recParcelaContratual').value = parcela ? UI.formatarMoeda(parcela) : '';
       seletorNe.atualizar(candidatosNeNovo_(objeto));
       document.getElementById('recStatus').innerHTML = await opcoesStatus(document.getElementById('recStatus').value, document.getElementById('recFonte').value);
       UI.tornarPesquisavel('recStatus');
