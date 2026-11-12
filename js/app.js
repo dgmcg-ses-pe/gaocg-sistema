@@ -217,7 +217,16 @@ const UI = (function () {
     const corpoEl = el.querySelector('.modal-corpo');
     corpoEl.addEventListener('input', () => { modalSujo_ = true; }, { once: true });
     corpoEl.addEventListener('change', () => { modalSujo_ = true; }, { once: true });
-    corpoEl.addEventListener('click', e => { if (e.target.closest('button')) modalSujo_ = true; }, { once: true });
+    // Sem { once: true } no 'click' (2026-11-12, bug relatado pelo usuário): com ele, o
+    // 1º clique em qualquer lugar do corpo (um campo, um texto) gastava o listener sem
+    // marcar nada, e a lixeira clicada depois não contava - "Salvar" só fechava o card e
+    // a LE apagada continuava na planilha (e a extensão a via como anexada).
+    const marcarCliqueEmBotao_ = e => {
+      if (!e.target.closest('button')) return;
+      modalSujo_ = true;
+      corpoEl.removeEventListener('click', marcarCliqueEmBotao_);
+    };
+    corpoEl.addEventListener('click', marcarCliqueEmBotao_);
 
     modalTituloAtivo_ = titulo;
     const overlay = document.getElementById('sobreposicaoModal');
