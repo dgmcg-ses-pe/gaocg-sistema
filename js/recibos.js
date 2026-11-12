@@ -1423,7 +1423,7 @@ const TelaRecibos = (function () {
           <label>Documentos anexados (LE + Ordens Bancárias)</label>
           <div class="pd-ob-tabela-wrap"></div>
           <input type="file" class="pd-le-novo-anexo oculto" accept=".pdf,image/*" />
-          <input type="file" class="pd-ob-novo-anexo oculto" accept=".pdf,image/*" />
+          <input type="file" class="pd-ob-novo-anexo oculto" accept=".pdf,image/*" multiple />
           <button type="button" class="botao pd-add-le">+ Adicionar LE</button>
           <button type="button" class="botao pd-add-ob">+ Adicionar OB</button>
         </div>
@@ -1504,33 +1504,52 @@ const TelaRecibos = (function () {
 
     const inputNovoOb = div.querySelector('.pd-ob-novo-anexo');
     div.querySelector('.pd-add-ob').addEventListener('click', () => inputNovoOb.click());
+    // Várias OBs de uma vez (2026-11-12, pedido do usuário): o seletor aceita vários
+    // arquivos, lidos um por vez (mesma leitura e conferências de antes). Uma OB recusada
+    // não impede as outras; cada recusa vem num aviso com o nome do arquivo.
+    const botaoAddOb = div.querySelector('.pd-add-ob');
+    const textoBotaoAddOb = botaoAddOb.textContent;
     inputNovoOb.addEventListener('change', async function () {
-      const arquivo = inputNovoOb.files[0];
-      if (!arquivo) return;
+      const arquivos = Array.from(inputNovoOb.files || []);
+      inputNovoOb.value = '';
+      if (!arquivos.length) return;
       const notaEmpenho = (obterNotaEmpenho() || '').trim();
-      if (!notaEmpenho) { UI.toast('Selecione a Nota de Empenho antes de anexar este documento.', 'erro'); inputNovoOb.value = ''; return; }
+      if (!notaEmpenho) { UI.toast('Selecione a Nota de Empenho antes de anexar este documento.', 'erro'); return; }
+      const varios = arquivos.length > 1;
+      let anexadas = 0;
+      botaoAddOb.disabled = true;
       try {
-        if (arquivo.size > 8 * 1024 * 1024) throw new Error('Arquivo muito grande (máximo 8MB).');
-        const base64 = await UI.lerArquivoBase64(arquivo);
-        const resultado = await Api.chamar('lerAnexoRecibo', {
-          tipo: 'ordem_bancaria', arquivoBase64: base64, arquivoNome: arquivo.name, arquivoTipo: arquivo.type, notaEmpenhoEsperada: notaEmpenho,
-          competenciaEsperada: ctx.obterCompetencia()
-        });
-        if (resultado.numero_documento && numerosDocumentosAnexadosNaTela_(containerId).numerosOb.has(resultado.numero_documento)) {
-          UI.toast('A Ordem Bancária nº ' + resultado.numero_documento + ' já foi anexada a este processo.', 'erro');
-          return;
+        for (let i = 0; i < arquivos.length; i++) {
+          const arquivo = arquivos[i];
+          const prefixo = varios ? arquivo.name + ': ' : '';
+          if (varios) botaoAddOb.textContent = `Lendo OB ${i + 1} de ${arquivos.length}…`;
+          try {
+            if (arquivo.size > 8 * 1024 * 1024) throw new Error('Arquivo muito grande (máximo 8MB).');
+            const base64 = await UI.lerArquivoBase64(arquivo);
+            const resultado = await Api.chamar('lerAnexoRecibo', {
+              tipo: 'ordem_bancaria', arquivoBase64: base64, arquivoNome: arquivo.name, arquivoTipo: arquivo.type, notaEmpenhoEsperada: notaEmpenho,
+              competenciaEsperada: ctx.obterCompetencia()
+            });
+            if (resultado.numero_documento && numerosDocumentosAnexadosNaTela_(containerId).numerosOb.has(resultado.numero_documento)) {
+              UI.toast(prefixo + 'A Ordem Bancária nº ' + resultado.numero_documento + ' já foi anexada a este processo.', 'erro');
+              continue;
+            }
+            if (!confirmarLeituraOb_(resultado, ctx)) continue;
+            div._ordensBancarias.push({
+              numero_ob: resultado.numero_documento || '', valor: resultado.valor,
+              _base64: base64, _nome: arquivo.name, _tipo: arquivo.type
+            });
+            anexadas++;
+            renderTabelaOrdensBancariasParcela_(div);
+          } catch (err) {
+            UI.toast(prefixo + err.message, 'erro');
+          }
         }
-        if (!confirmarLeituraOb_(resultado, ctx)) return;
-        div._ordensBancarias.push({
-          numero_ob: resultado.numero_documento || '', valor: resultado.valor,
-          _base64: base64, _nome: arquivo.name, _tipo: arquivo.type
-        });
-        renderTabelaOrdensBancariasParcela_(div);
-      } catch (err) {
-        UI.toast(err.message, 'erro');
       } finally {
-        inputNovoOb.value = '';
+        botaoAddOb.disabled = false;
+        botaoAddOb.textContent = textoBotaoAddOb;
       }
+      if (varios) UI.toast(`${anexadas} de ${arquivos.length} Ordens Bancárias adicionadas. Clique em Salvar para gravar.`, anexadas ? 'sucesso' : 'erro');
     });
     renderTabelaOrdensBancariasParcela_(div);
   }
