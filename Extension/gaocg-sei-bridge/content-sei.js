@@ -2941,7 +2941,33 @@ function garantirCartaoAcompanhamento_() {
 const ID_CARTAO_RECIBO_SEI_ = "gaocgCartaoReciboSei";
 const CHAVE_RECIBO_SEI_MINIMIZADO_ = "gaocgReciboSeiMinimizado";
 const REGEX_NOME_LE_OB_ = /ordem\s+banc|nota\s+de\s+liquida|\d{4}\s*(?:LE|OB)\s*\d{6}|\b(?:LE|OB)\s*n?[ºo°]?\s*\d{3,6}\b/i;
-const estadoReciboSei_ = { raiz: null, chave: "", execucao: null, arvore: null, interrompido: false, itens: [] };
+// NEs na árvore (2026-11-13, pedido do usuário): "Anexo 2026NE000430 - UPA BARRA ...". Só com o
+// SEI na unidade SES-GAOCG - é lá que as NEs entram no processo da SOF.
+const REGEX_NOME_NE_ = /\d{4}\s*NE\s*\d{6}|nota\s+de\s+empenho/i;
+const SIGLA_UNIDADE_NE_ = "SES-GAOCG";
+const estadoReciboSei_ = { raiz: null, chave: "", execucao: null, arvore: null, interrompido: false, itens: [], semSof: false };
+
+/** Sigla da unidade em que o usuário está logado no SEI (topo da tela), sem espaços: "SES-GAOCG". */
+function siglaUnidadeSei_() {
+  const seletores = ["#lnkInfraUnidade", "#selInfraUnidades", "[id*='InfraUnidade']"];
+  for (const seletor of seletores) {
+    const el = document.querySelector(seletor);
+    if (!el) continue;
+    const texto = el.tagName === "SELECT"
+      ? (el.options[el.selectedIndex] ? el.options[el.selectedIndex].text : "")
+      : (el.textContent || el.value || "");
+    const sigla = semAcentos_(texto).toUpperCase().replace(/\s+/g, "");
+    if (/[A-Z]/.test(sigla)) return sigla;
+  }
+  return "";
+}
+
+/** Qual fluxo o documento segue: "recibo" (LE/OB), "ne" (NE na unidade SES-GAOCG) ou "" (nenhum). */
+function fluxoDoDocumentoSei_(nome, unidadeNe) {
+  if (REGEX_NOME_LE_OB_.test(nome)) return "recibo";
+  if (unidadeNe && REGEX_NOME_NE_.test(nome)) return "ne";
+  return "";
+}
 
 function textoDosScriptsDaArvore_(doc) {
   return Array.from(doc.querySelectorAll("script")).map(s => s.textContent || "").join("\n");
@@ -3088,7 +3114,7 @@ async function processarItemReciboSei_(item, arvore, extras, vigente) {
       item.progresso = Math.min(95, item.progresso + (95 - item.progresso) * 0.05);
       pintar();
     }, 300);
-    const registro = await pedirAoAppGaocg_("anexarDocumentoSeiRecibo", Object.assign({
+    const registro = await pedirAoAppGaocg_(item.fluxo === "ne" ? "anexarNeSeiSof" : "anexarDocumentoSeiRecibo", Object.assign({
       numero_processo: arvore.numeroProcesso, id_documento_sei: item.id, nome_arvore: item.nome,
       arquivoNome: pdf.nome, arquivoBase64: pdf.base64
     }, extras || {}));
@@ -3113,6 +3139,7 @@ function situacaoItemReciboSei_(item) {
   const r = item.registro;
   if (item.lendo) return { classe: "lendo", progresso: true };
   if (!r) return { classe: "lendo", marca: "…", texto: "Na fila" };
+  if (item.fluxo === "ne") return situacaoItemNeSei_(r);
   // Fica no cartão de vez (pedido do usuário, 2026-11-11): o app guarda o resultado, então reabrir o
   // processo mostra de novo onde cada documento foi parar.
   const onde = r.recibo_id + (r.recibo_descricao ? " (" + r.recibo_descricao + ")" : "");
@@ -3124,6 +3151,20 @@ function situacaoItemReciboSei_(item) {
   // Não reanexa sozinha - a remoção pode ter sido de propósito -, só oferece o botão.
   if (r.resultado === "removido") {
     return { classe: "pendente", marca: "!", texto: r.motivo || "Foi removida do recibo no app.", reanexar: true };
+  }
+  return { classe: "pendente", marca: "!", texto: "Não anexada: " + (r.motivo || "precisa de conferência.") };
+}
+
+/** NE do processo: onde foi parar no app (r.destino = "SOF 051/2026 · UPA BARRA · objeto"). */
+function situacaoItemNeSei_(r) {
+  const tipo = r.tipo === "reforco" ? "Reforço" : "NE";
+  const onde = r.destino ? " " + r.destino : " SOF";
+  const nota = r.motivo ? " " + r.motivo : "";
+  if (r.resultado === "anexado") return { classe: "ok", marca: "✓", texto: tipo + " anexada na" + onde + "." + nota };
+  if (r.resultado === "ja_estava") return { classe: "ok", marca: "✓", texto: tipo + " já estava na" + onde + "." };
+  if (r.resultado === "ignorado") return { classe: "ignorado", marca: "–", texto: r.motivo || "Não é Nota de Empenho." };
+  if (r.resultado === "removido") {
+    return { classe: "pendente", marca: "!", texto: r.motivo || "Foi excluída da SOF no app.", reanexar: true };
   }
   return { classe: "pendente", marca: "!", texto: "Não anexada: " + (r.motivo || "precisa de conferência.") };
 }
@@ -3151,7 +3192,7 @@ function pintarCartaoReciboSei_(aviso, ehErro) {
     if (!aviso) {
       const el = document.createElement("div");
       el.className = "aviso";
-      el.textContent = "Nenhuma LE ou OB nas pastas abertas.";
+      el.textContent = "Nenhum documento para o app nas pastas abertas.";
       corpo.appendChild(el);
     }
     return;
@@ -3204,9 +3245,16 @@ async function sincronizarReciboSei_(arvore) {
   const vigente = () => e.execucao === execucao;
   try {
     pintarCartaoReciboSei_("Conferindo com o app GAOCG…");
+    const temRecibo = e.itens.some(i => i.fluxo === "recibo");
+    const temNe = e.itens.some(i => i.fluxo === "ne");
     let vistos = [];
     try {
-      vistos = await pedirAoAppGaocg_("documentosSeiProcessados", { numero_processo: arvore.numeroProcesso });
+      if (temRecibo) vistos = vistos.concat(await pedirAoAppGaocg_("documentosSeiProcessados", { numero_processo: arvore.numeroProcesso }) || []);
+      if (temNe) {
+        const ne = await pedirAoAppGaocg_("documentosSeiNeProcessados", { numero_processo: arvore.numeroProcesso }) || {};
+        vistos = vistos.concat(ne.registros || []);
+        e.semSof = !(ne.sofs || []).length;
+      }
     } catch (erro) {
       if (vigente()) pintarCartaoReciboSei_(String(erro && erro.message ? erro.message : erro), true);
       return;
@@ -3218,11 +3266,20 @@ async function sincronizarReciboSei_(arvore) {
     e.itens.forEach(item => { item.registro = porId[item.id] || (item.registro && item.registro.final ? item.registro : null); });
     pintarCartaoReciboSei_();
 
+    let anexouNe = false;
     for (const item of e.itens) {
       if (!vigente()) return;
       if (!reciboSeiAtivo_) { e.interrompido = true; return; }
       if (item.registro && item.registro.final) continue;
       await processarItemReciboSei_(item, arvore, null, vigente);
+      if (item.fluxo === "ne" && item.registro && item.registro.resultado === "anexado") anexouNe = true;
+    }
+    // Reforço que veio antes da NE mãe na árvore: com a mãe anexada agora, tenta de novo.
+    if (anexouNe) {
+      for (const item of e.itens) {
+        if (!vigente() || !reciboSeiAtivo_) return;
+        if (item.fluxo === "ne" && item.registro && item.registro.aguardando_mae) await processarItemReciboSei_(item, arvore, null, vigente);
+      }
     }
   } finally {
     if (vigente()) e.execucao = null;
@@ -3235,10 +3292,10 @@ function montarCartaoReciboSei_(doc, arvore) {
   const raiz = hospedeiro.attachShadow({ mode: "open" });
   raiz.innerHTML = `
     <style>${ESTILO_CARTAO_RECIBO_SEI_}</style>
-    <section class="cartao" aria-label="LE e OB no recibo do GAOCG">
+    <section class="cartao" aria-label="Documentos do SEI para o app GAOCG">
       <header class="cabecalho">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m9 14 2 2 4-4"/></svg>
-        <span class="titulo">GAOCG · LE/OB no recibo</span>
+        <span class="titulo">GAOCG · Do SEI para o app</span>
         <button type="button" class="icone seta" title="Minimizar" aria-label="Minimizar">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>
         </button>
@@ -3271,13 +3328,16 @@ function montarCartaoReciboSei_(doc, arvore) {
   estadoReciboSei_.chave = chave;
   estadoReciboSei_.itens = arvore.documentos.map(d => {
     const antes = anteriores.find(a => a.id === d.id);
-    return { id: d.id, nome: d.nome, url: d.url, registro: antes ? antes.registro : null, erro: "", lendo: false };
+    return { id: d.id, nome: d.nome, url: d.url, fluxo: d.fluxo, registro: antes ? antes.registro : null, erro: "", lendo: false };
   });
   pintarCartaoReciboSei_();
   sincronizarReciboSei_(arvore);
 }
 
-/** Roda a cada segundo, junto dos outros cartões: só aparece em processo com LE/OB na árvore. */
+/**
+ * Roda a cada segundo, junto dos outros cartões: só aparece em processo com LE/OB na árvore
+ * ou, com o SEI na unidade SES-GAOCG, com NE na árvore (2026-11-13).
+ */
 function garantirCartaoReciboSei_() {
   const area = acharAreaArvore_();
   let doc = null;
@@ -3296,7 +3356,10 @@ function garantirCartaoReciboSei_() {
   if (!reciboSeiAtivo_) return;
   const arvore = documentosDaArvoreSei_(doc);
   if (!arvore) return;
-  arvore.documentos = arvore.documentos.filter(d => REGEX_NOME_LE_OB_.test(d.nome));
+  const unidadeNe = siglaUnidadeSei_() === SIGLA_UNIDADE_NE_;
+  arvore.documentos = arvore.documentos
+    .map(d => Object.assign(d, { fluxo: fluxoDoDocumentoSei_(d.nome, unidadeNe) }))
+    .filter(d => d.fluxo);
   if (arvore.documentos.length) montarCartaoReciboSei_(doc, arvore);
 }
 

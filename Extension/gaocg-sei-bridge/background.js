@@ -342,7 +342,9 @@ const CHAVE_SESSAO_GAOCG_ = "sessaoGaocg";
 // documentosSeiProcessados/anexarDocumentoSeiRecibo (2026-11-11): LE/OB do processo anexadas
 // sozinhas no Recibo (ReciboSei.gs). A segunda grava, mas é idempotente por documento do SEI
 // no backend, então o retry de postarNoAppGaocg_ não anexa duas vezes.
-const ACOES_DOCUMENTOS_GAOCG_ = ["listarDocumentosProcesso", "baixarDocumentoProcesso", "documentosSeiProcessados", "anexarDocumentoSeiRecibo"];
+// documentosSeiNeProcessados/anexarNeSeiSof (2026-11-13): NEs do processo anexadas sozinhas na SOF (NeSei.gs),
+// só com o SEI na unidade SES-GAOCG. Também idempotente por documento do SEI.
+const ACOES_DOCUMENTOS_GAOCG_ = ["listarDocumentosProcesso", "baixarDocumentoProcesso", "documentosSeiProcessados", "anexarDocumentoSeiRecibo", "documentosSeiNeProcessados", "anexarNeSeiSof"];
 const ESPERAS_API_GAOCG_MS_ = [800, 2500];
 
 async function guardarSessaoGaocg_(token) {

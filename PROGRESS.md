@@ -3231,6 +3231,14 @@ Pedido do usuário: mostrar o nome do usuário em vez do código na coluna Usuá
 
 **Testado:** os `.gs` reais em Node, com planilha simulada. Cenários: recibo avulso com OB anexada e depois apagada, LE apagada, pago parcial, troca manual de status, recibo sem registro no log, parcela dividida com duas OBs e depois uma apagada, OB sem NE na leitura nova e na leitura reaproveitada. **Não testado:** Apps Script, SEI e dados reais.
 
+## NE do SEI anexada sozinha na SOF (sessão 2026-11-13, extensão v0.59.0 + backend @124)
+
+- **Pedido do usuário:** com o SEI na unidade SES-GAOCG (a do topo da tela), a extensão confere os processos de SOF. A NE mãe (original) achada na árvore entra na SOF do app, e a NE de reforço entra junto da sua NE mãe.
+- **Extensão (`content-sei.js`):** `siglaUnidadeSei_` lê a unidade logada (`#lnkInfraUnidade`/`#selInfraUnidades`). Na SES-GAOCG, documentos cujo nome tem `2026NE000000` ou "Nota de Empenho" entram no mesmo cartão das LE/OB, que agora se chama **"GAOCG · Do SEI para o app"** (o botão do painel virou "Do SEI para o app"). As LE/OB continuam em qualquer unidade. Um reforço que vem antes da mãe na árvore é tentado de novo no fim da mesma passada.
+- **Backend (`NeSei.gs`, backend `e8ae4b1`):** `documentosSeiNeProcessados` e `anexarNeSeiSof`. A SOF é a que tem o processo aberto no campo SEI. A NE mãe vai para a linha de fonte (SofFontes) com a fonte lida (Tesouro/SUS). Se houver mais de uma, o desempate é feito pelo CNPJ, pela pista do objeto (RATEIO/PISO/IVAS), pelo período da SOF que cobre os meses do cronograma e pelos valores (cronograma da fonte, parcela mensal, total). Se ainda houver dúvida, a NE fica pendente com as opções listadas. O reforço vai para a SOF da NE mãe citada ("Nº DA N.E. DE REFERÊNCIA"), de preferência a do processo, mas pode ir para a de outro processo (o usuário confirmou). É gravado um reforço por mês do cronograma; sem cronograma, vale o mês do nome na árvore. A nova aba `DocumentosSeiNe` é criada sozinha. Uma NE excluída no app aparece como "removido", e o cartão oferece "Anexar de novo".
+
+**Testado:** os `.gs` reais em Node, com planilha simulada (reforço antes da mãe, mãe TES e SUS, repetição, mesma NE em outro documento, reforço de outro processo, processo sem SOF, SOFs ambíguas, NE excluída e reanexada, documento que não é NE). Também testados a classificação dos nomes da árvore do print do usuário e a sintaxe da extensão. **Não testado:** no SEI de verdade, incluindo o seletor da unidade no topo e o OCR real das NEs.
+
 ## Referências úteis
 - Repositório: `https://github.com/AndersonG2021/APP-GAOCG.git`, branch `main`, publicado via GitHub Pages.
 - Backend roda só no Apps Script; **sempre que um `.gs` mudar, colar manualmente, reimplantar (Implantar → Gerenciar implantações → editar → Nova versão) E atualizar a cópia correspondente em `/backend` neste repositório**, no mesmo commit.
