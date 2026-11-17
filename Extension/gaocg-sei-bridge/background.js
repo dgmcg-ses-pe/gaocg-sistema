@@ -421,6 +421,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         avisarAppRecibosAlterados_((r.recibos || []).map(x => ({
           recibo_id: x.id, recibo_descricao: x.descricao || "",
           texto: (r.resultado === "criado" ? "Recibo " + x.id + " criado" : "Processo " + x.numero_processo + " informado no recibo " + x.id) +
+            (r.dividido ? " em parcelas" : "") +
             " a partir do acompanhamento do SEI" + (x.descricao ? " (" + x.descricao + ")" : "")
         })));
       }

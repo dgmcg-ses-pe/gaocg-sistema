@@ -2563,6 +2563,7 @@ const ESTILO_CARTAO_ACOMPANHAMENTO_ = `
   .recibo-app .texto { font-size: 12.5px; overflow-wrap: anywhere; }
   .recibo-app .ok { font-size: 12.5px; font-weight: 600; color: #1d6b3a; overflow-wrap: anywhere; }
   .recibo-app .acoes .anexar { margin: 0; }
+  .recibo-app .parcelas { margin-top: 7px; margin-bottom: 0; }
 `;
 
 function pintarCartaoAcompanhamento_(registros, erro) {
@@ -2962,11 +2963,14 @@ function pintarReciboDoAcompanhamento_(area, registro, escolha, p) {
     return;
   }
 
-  let rotuloBotao;
+  let rotuloBotao, rotuloDividido;
   if (p.situacao === "vincular") {
     const ids = (p.recibos || []).map(r => r.id).join(", ");
-    area.appendChild(elementoConferencia_("div", "texto", "Já existe no app, sem número de processo: recibo " + ids + "."));
+    area.appendChild(elementoConferencia_("div", "texto", "Já existe no app, sem número de processo: recibo " + ids +
+      (p.ja_dividido ? " (já dividido em parcelas)" : "") + "."));
+    if (p.motivo_sem_divisao) area.appendChild(elementoConferencia_("div", "detalhe", p.motivo_sem_divisao));
     rotuloBotao = "Informar o processo no recibo";
+    rotuloDividido = "Informar e dividir em parcelas";
   } else {
     area.appendChild(elementoConferencia_("div", "texto", "Ainda não há recibo para este processo."));
     if (p.outros && p.outros.length) {
@@ -2974,11 +2978,25 @@ function pintarReciboDoAcompanhamento_(area, registro, escolha, p) {
         p.outros.map(r => "Recibo " + r.id + (r.numero_processo ? " (" + r.numero_processo + ")" : "")).join("; ") + ". Confira antes de criar."));
     }
     rotuloBotao = "Criar Recibo no app";
+    rotuloDividido = "Criar em 2 parcelas";
   }
   const gravar = elementoConferencia_("button", "anexar", rotuloBotao);
   gravar.type = "button";
-  const confirmado = Object.assign({}, escolha, { unidade_id: p.unidade_id, objeto: p.objeto, competencia: p.competencia });
-  gravar.addEventListener("click", () => gravarReciboDoAcompanhamento_(area, registro, confirmado, gravar));
+  // Só Contrato de Gestão (TES), com o split fixo do app (pedido do usuário, 2026-11-17).
+  let dividir = null;
+  if (p.pode_dividir) {
+    const opcao = elementoConferencia_("label", "nome parcelas");
+    dividir = document.createElement("input");
+    dividir.type = "checkbox";
+    dividir.addEventListener("change", () => { gravar.textContent = dividir.checked ? rotuloDividido : rotuloBotao; });
+    opcao.append(dividir, elementoConferencia_("span", "", "Pagamento em mais de uma parcela (70% / 30%)"));
+    area.appendChild(opcao);
+  }
+  gravar.addEventListener("click", () => {
+    const confirmado = Object.assign({}, escolha, { unidade_id: p.unidade_id, objeto: p.objeto, competencia: p.competencia });
+    if (dividir && dividir.checked) confirmado.dividir = true;
+    gravarReciboDoAcompanhamento_(area, registro, confirmado, gravar);
+  });
   acoes.appendChild(gravar);
   area.appendChild(acoes);
 }
@@ -2991,7 +3009,8 @@ async function gravarReciboDoAcompanhamento_(area, registro, escolha, botao) {
     const r = await pedirAoAppGaocg_("criarReciboAcompanhamentoSei", dadosReciboAcompanhamento_(registro, escolha));
     if (!area.isConnected) return;
     inicioAreaRecibo_(area);
-    const prefixo = r.resultado === "criado" ? "Criado: " : r.resultado === "vinculado" ? "Processo informado: " : "Já cadastrado: ";
+    const prefixo = r.resultado === "criado" ? (r.dividido ? "Criado em parcelas: " : "Criado: ")
+      : r.resultado === "vinculado" ? (r.dividido ? "Processo informado e recibo dividido: " : "Processo informado: ") : "Já cadastrado: ";
     area.appendChild(elementoConferencia_("div", "ok", prefixo + listaDeRecibos_(r.recibos)));
   } catch (erro) {
     if (!area.isConnected) return;
