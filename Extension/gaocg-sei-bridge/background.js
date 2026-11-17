@@ -344,7 +344,9 @@ const CHAVE_SESSAO_GAOCG_ = "sessaoGaocg";
 // no backend, então o retry de postarNoAppGaocg_ não anexa duas vezes.
 // documentosSeiNeProcessados/anexarNeSeiSof (2026-11-13): NEs do processo anexadas sozinhas na SOF (NeSei.gs),
 // só com o SEI na unidade SES-GAOCG. Também idempotente por documento do SEI.
-const ACOES_DOCUMENTOS_GAOCG_ = ["listarDocumentosProcesso", "baixarDocumentoProcesso", "documentosSeiProcessados", "anexarDocumentoSeiRecibo", "documentosSeiNeProcessados", "anexarNeSeiSof"];
+// preverReciboAcompanhamentoSei/criarReciboAcompanhamentoSei (2026-11-17): Recibo criado pelo cartão do
+// Acompanhamento Especial (AcompanhamentoSei.gs). A segunda grava, mas é idempotente por processo do SEI.
+const ACOES_DOCUMENTOS_GAOCG_ = ["listarDocumentosProcesso", "baixarDocumentoProcesso", "documentosSeiProcessados", "anexarDocumentoSeiRecibo", "documentosSeiNeProcessados", "anexarNeSeiSof", "preverReciboAcompanhamentoSei", "criarReciboAcompanhamentoSei"];
 const ESPERAS_API_GAOCG_MS_ = [800, 2500];
 
 async function guardarSessaoGaocg_(token) {
@@ -414,6 +416,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         avisarAppRecibosAlterados_([{
           recibo_id: r.recibo_id, recibo_descricao: r.recibo_descricao || "", tipo: r.tipo, numero_documento: r.numero_documento
         }]);
+      }
+      if (message.acao === "criarReciboAcompanhamentoSei" && r && (r.resultado === "criado" || r.resultado === "vinculado")) {
+        avisarAppRecibosAlterados_((r.recibos || []).map(x => ({
+          recibo_id: x.id, recibo_descricao: x.descricao || "",
+          texto: (r.resultado === "criado" ? "Recibo " + x.id + " criado" : "Processo " + x.numero_processo + " informado no recibo " + x.id) +
+            " a partir do acompanhamento do SEI" + (x.descricao ? " (" + x.descricao + ")" : "")
+        })));
       }
       sendResponse(resposta);
     })

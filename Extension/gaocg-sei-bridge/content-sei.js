@@ -2438,7 +2438,7 @@ function garantirCartaoAnotacao_() {
 const ID_CARTAO_ACOMPANHAMENTO_ = "gaocgCartaoAcompanhamento";
 const CHAVE_ACOMPANHAMENTO_MINIMIZADO_ = "gaocgAcompanhamentoMinimizado";
 
-const estadoAcompanhamento_ = { raiz: null, link: null, lendo: false };
+const estadoAcompanhamento_ = { raiz: null, link: null, doc: null, lendo: false };
 
 function linkAcompanhamentoDaArvore_(docArvore) {
   for (const script of Array.from(docArvore.querySelectorAll("script:not([src])"))) {
@@ -2464,12 +2464,12 @@ function unidadeDaObservacao_(observacao) {
   return String(observacao || "").split(/\s+-\s*|\s*-\s+/)[0].trim();
 }
 
+/** Rateio é objeto, não fonte: é da fonte Tesouro (correção do usuário, 2026-11-17). */
 function fontesNoTexto_(texto) {
   const normal = semAcentos_(texto).toUpperCase();
   const fontes = [];
   if (/\bSUS\b/.test(normal)) fontes.push("SUS");
-  if (/\bTES(OURO)?\b/.test(normal)) fontes.push("Tesouro");
-  if (/\bRATEIO\b/.test(normal)) fontes.push("Rateio");
+  if (/\bTES(OURO)?\b/.test(normal) || /\bRATEIO\b/.test(normal)) fontes.push("Tesouro");
   return fontes;
 }
 
@@ -2558,6 +2558,11 @@ const ESTILO_CARTAO_ACOMPANHAMENTO_ = `
   .acoes { display: flex; gap: 6px; align-items: stretch; margin-top: 8px; }
   .acoes .anexar { flex: 1; width: auto; margin: 0; }
   .escolha { margin-top: 6px; }
+  .recibo-app { margin-top: 10px; padding-top: 8px; border-top: 1px dashed #b9d0e4; }
+  .recibo-app .rotulo { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; opacity: .65; margin-bottom: 3px; }
+  .recibo-app .texto { font-size: 12.5px; overflow-wrap: anywhere; }
+  .recibo-app .ok { font-size: 12.5px; font-weight: 600; color: #1d6b3a; overflow-wrap: anywhere; }
+  .recibo-app .acoes .anexar { margin: 0; }
 `;
 
 function pintarCartaoAcompanhamento_(registros, erro) {
@@ -2615,6 +2620,10 @@ function pintarCartaoAcompanhamento_(registros, erro) {
       botao.textContent = "Anexar documentos do processo";
       botao.addEventListener("click", () => abrirConferenciaDocumentos_(registro, {}));
       bloco.appendChild(botao);
+      const areaRecibo = document.createElement("div");
+      areaRecibo.className = "recibo-app";
+      bloco.appendChild(areaRecibo);
+      preverReciboDoAcompanhamento_(areaRecibo, registro, {});
     }
     corpo.appendChild(bloco);
   }
@@ -2851,6 +2860,147 @@ function montarConferencia_(painel, dados, selSerie) {
   painel.appendChild(acoes);
 }
 
+/* -------- Recibo no app a partir do acompanhamento (pedido do usuário, 2026-11-17) --------
+ *
+ * O app diz o que faria (preverReciboAcompanhamentoSei, só leitura) e só grava com o clique
+ * em "Criar Recibo no app" ou "Informar o processo no recibo": um Recibo errado no app
+ * passaria despercebido. Sem certeza de unidade, objeto ou competência, a pergunta aparece
+ * aqui e quem escolhe é o usuário. As regras ficam no backend (AcompanhamentoSei.gs).
+ */
+
+const CAMPO_ESCOLHA_RECIBO_ = { unidade: "unidade_id", objeto: "objeto", competencia: "competencia" };
+
+function textoDoErro_(erro) {
+  return String(erro && erro.message ? erro.message : erro);
+}
+
+function dadosReciboAcompanhamento_(registro, escolha) {
+  const doc = estadoAcompanhamento_.doc;
+  const arvore = doc ? documentosDaArvoreSei_(doc) : null;
+  return Object.assign({
+    numero_processo: arvore ? arvore.numeroProcesso : "",
+    grupo: registro.grupo,
+    observacao: registro.observacao,
+    unidade: registro.unidade
+  }, escolha);
+}
+
+function listaDeRecibos_(recibos) {
+  return (recibos || []).map(r => "Recibo " + r.id + (r.descricao ? " · " + r.descricao : "")).join("; ");
+}
+
+function inicioAreaRecibo_(area) {
+  area.hidden = false;
+  area.textContent = "";
+  area.appendChild(elementoConferencia_("div", "rotulo", "Recibo no app"));
+}
+
+async function preverReciboDoAcompanhamento_(area, registro, escolha) {
+  inicioAreaRecibo_(area);
+  area.appendChild(elementoConferencia_("div", "aviso", "Conferindo…"));
+  let previsto;
+  try {
+    previsto = await pedirAoAppGaocg_("preverReciboAcompanhamentoSei", dadosReciboAcompanhamento_(registro, escolha));
+  } catch (erro) {
+    if (!area.isConnected) return;
+    inicioAreaRecibo_(area);
+    const aviso = elementoConferencia_("div", "aviso", textoDoErro_(erro));
+    const repetir = elementoConferencia_("button", "", "Tentar de novo");
+    repetir.type = "button";
+    repetir.addEventListener("click", () => preverReciboDoAcompanhamento_(area, registro, escolha));
+    aviso.appendChild(repetir);
+    area.appendChild(aviso);
+    return;
+  }
+  if (area.isConnected) pintarReciboDoAcompanhamento_(area, registro, escolha, previsto);
+}
+
+function pintarReciboDoAcompanhamento_(area, registro, escolha, p) {
+  if (!p || p.situacao === "nao_recibo") { area.textContent = ""; area.hidden = true; return; }
+  inicioAreaRecibo_(area);
+  if (p.situacao === "ja_existe") {
+    area.appendChild(elementoConferencia_("div", "ok", "Já cadastrado: " + listaDeRecibos_(p.recibos)));
+    return;
+  }
+  const identificado = [p.unidade_nome, p.objeto, p.competencia, p.fonte && "Fonte " + p.fonte].filter(Boolean).join(" · ");
+  if (identificado) area.appendChild(elementoConferencia_("div", "detalhe", identificado));
+  if (p.situacao === "erro") {
+    area.appendChild(elementoConferencia_("div", "alerta", p.mensagem || "Não consegui conferir o recibo."));
+    return;
+  }
+
+  const acoes = elementoConferencia_("div", "acoes");
+  if (Object.keys(escolha).length) {
+    const recomecar = elementoConferencia_("button", "secundario", "Recomeçar");
+    recomecar.type = "button";
+    recomecar.addEventListener("click", () => preverReciboDoAcompanhamento_(area, registro, {}));
+    acoes.appendChild(recomecar);
+  }
+
+  if (p.situacao === "falta") {
+    area.appendChild(elementoConferencia_("div", "texto", p.pergunta || "Falta uma informação."));
+    const lista = elementoConferencia_("select", "escolha");
+    lista.setAttribute("aria-label", p.pergunta || "Escolha");
+    for (const opcao of p.opcoes || []) {
+      const item = elementoConferencia_("option", "", opcao.rotulo);
+      item.value = opcao.valor;
+      lista.appendChild(item);
+    }
+    area.appendChild(lista);
+    const continuar = elementoConferencia_("button", "anexar", "Continuar");
+    continuar.type = "button";
+    continuar.disabled = !(p.opcoes || []).length;
+    continuar.addEventListener("click", () => {
+      const nova = Object.assign({}, escolha, { [CAMPO_ESCOLHA_RECIBO_[p.falta]]: lista.value });
+      // O que já foi identificado segue junto, para a próxima pergunta não repetir a anterior.
+      if (p.unidade_id) nova.unidade_id = p.unidade_id;
+      if (p.objeto) nova.objeto = p.objeto;
+      preverReciboDoAcompanhamento_(area, registro, nova);
+    });
+    acoes.appendChild(continuar);
+    area.appendChild(acoes);
+    return;
+  }
+
+  let rotuloBotao;
+  if (p.situacao === "vincular") {
+    const ids = (p.recibos || []).map(r => r.id).join(", ");
+    area.appendChild(elementoConferencia_("div", "texto", "Já existe no app, sem número de processo: recibo " + ids + "."));
+    rotuloBotao = "Informar o processo no recibo";
+  } else {
+    area.appendChild(elementoConferencia_("div", "texto", "Ainda não há recibo para este processo."));
+    if (p.outros && p.outros.length) {
+      area.appendChild(elementoConferencia_("div", "alerta", "Já existe nesta competência, com outro processo: " +
+        p.outros.map(r => "Recibo " + r.id + (r.numero_processo ? " (" + r.numero_processo + ")" : "")).join("; ") + ". Confira antes de criar."));
+    }
+    rotuloBotao = "Criar Recibo no app";
+  }
+  const gravar = elementoConferencia_("button", "anexar", rotuloBotao);
+  gravar.type = "button";
+  const confirmado = Object.assign({}, escolha, { unidade_id: p.unidade_id, objeto: p.objeto, competencia: p.competencia });
+  gravar.addEventListener("click", () => gravarReciboDoAcompanhamento_(area, registro, confirmado, gravar));
+  acoes.appendChild(gravar);
+  area.appendChild(acoes);
+}
+
+async function gravarReciboDoAcompanhamento_(area, registro, escolha, botao) {
+  const rotulo = botao.textContent;
+  botao.disabled = true;
+  botao.textContent = "Gravando…";
+  try {
+    const r = await pedirAoAppGaocg_("criarReciboAcompanhamentoSei", dadosReciboAcompanhamento_(registro, escolha));
+    if (!area.isConnected) return;
+    inicioAreaRecibo_(area);
+    const prefixo = r.resultado === "criado" ? "Criado: " : r.resultado === "vinculado" ? "Processo informado: " : "Já cadastrado: ";
+    area.appendChild(elementoConferencia_("div", "ok", prefixo + listaDeRecibos_(r.recibos)));
+  } catch (erro) {
+    if (!area.isConnected) return;
+    botao.disabled = false;
+    botao.textContent = rotulo;
+    area.appendChild(elementoConferencia_("div", "alerta", textoDoErro_(erro)));
+  }
+}
+
 async function carregarCartaoAcompanhamento_() {
   const e = estadoAcompanhamento_;
   if (e.lendo) return;
@@ -2905,6 +3055,7 @@ function montarCartaoAcompanhamento_(doc, link) {
 
   estadoAcompanhamento_.raiz = raiz;
   estadoAcompanhamento_.link = link;
+  estadoAcompanhamento_.doc = doc;
   carregarCartaoAcompanhamento_();
 }
 

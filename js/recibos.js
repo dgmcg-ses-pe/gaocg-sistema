@@ -2141,6 +2141,7 @@ const TelaRecibos = (function () {
   }
 
   function textoAlteracao_(a) {
+    if (a.texto) return String(a.texto); // Recibo criado/vinculado pelo acompanhamento do SEI (2026-11-17)
     const doc = (a.tipo === 'OB' ? 'Ordem Bancária ' : a.tipo === 'LE' ? 'Nota de Liquidação ' : 'Documento ') + (a.numero_documento || '');
     return doc.trim() + ' anexada no recibo ' + a.recibo_id + (a.recibo_descricao ? ' (' + a.recibo_descricao + ')' : '');
   }
