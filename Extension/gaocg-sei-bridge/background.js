@@ -516,17 +516,16 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
  * - Só entra OB PAGA e assinada (o PDF só sai assinado; antes de paga ela ainda muda).
  * - Linha de base: na 1ª consulta de cada NE, as OBs que já existiam não geram aviso -
  *   ficam em "Anteriores" na página, para o usuário anexar se quiser.
- * - A consulta troca o contexto da tela de Ordem Bancária no E-fisco: com essa tela
- *   aberta numa aba, a busca automática espera, e a manual pergunta antes.
+ * - A consulta troca o contexto da tela de Ordem Bancária no E-fisco, mas não espera
+ *   nem pergunta se ela estiver aberta numa aba (pedido do usuário, v0.62.1).
  * ===================================================================== */
 const CHAVE_EFISCO_CONFIG_ = "efiscoConfig";        // { ativo, grupos: ["hospital", "upa", "upae_carreta"], intervaloMin }
-const CHAVE_EFISCO_ESTADO_ = "efiscoEstado";        // { situacao, mensagem, ultimaVerificacao, emAndamento, progresso, adiadaEm }
+const CHAVE_EFISCO_ESTADO_ = "efiscoEstado";        // { situacao, mensagem, ultimaVerificacao, emAndamento, progresso }
 const CHAVE_EFISCO_OBS_ = "efiscoObs";              // { "2026OB095602": { linha do E-fisco + unidade, estado, motivo, recibo... } }
 const CHAVE_EFISCO_NES_VISTAS_ = "efiscoNesVistas"; // { "2026NE000418": epoch da 1ª consulta }
 const ALARME_EFISCO_ = "efisco-obs";
 const URL_EFISCO_ = "https://efisco.sefaz.pe.gov.br/";
 const URL_APP_GAOCG_ = "https://dgmcg-ses-pe.github.io/gaocg-sistema/";
-const PADRAO_ABA_OB_EFISCO_ = "https://efisco.sefaz.pe.gov.br/sfi_fin_gfe/PRManterOrdemBancaria*";
 const GRUPOS_UNIDADE_EFISCO_ = { hospital: ["HOSPITAL"], upa: ["UPA"], upae_carreta: ["UPAE", "CARRETA"] };
 const CONFIG_EFISCO_PADRAO_ = { ativo: true, grupos: [], intervaloMin: 30 };
 const PAUSA_ENTRE_NES_MS_ = 300;
@@ -661,12 +660,6 @@ async function comLeitorEfisco_(tarefa) {
   }
 }
 
-async function abaDeObAberta_() {
-  try { return (await chrome.tabs.query({ url: PADRAO_ABA_OB_EFISCO_ })).length > 0; } catch (e) { return false; }
-}
-
-const AVISO_ABA_OB_ = "A tela de Ordem Bancária está aberta numa aba do E-fisco e vai cair (\"Tempo de inatividade excedido\") se a extensão consultar agora.";
-
 /* ---------- busca ---------- */
 async function verificarObsEfisco_(opcoes) {
   opcoes = opcoes || {};
@@ -679,16 +672,9 @@ async function verificarObsEfisco_(opcoes) {
     await mudarSituacaoEfisco_("sem_tipos", "Escolha no painel da extensão os tipos de unidade que você cuida.");
     return { ok: false, erro: "Escolha os tipos de unidade que você cuida." };
   }
-  if (await abaDeObAberta_()) {
-    if (!manual) {
-      await atualizarEstadoEfisco_({ adiadaEm: Date.now() });
-      return { ok: false, adiada: true, erro: AVISO_ABA_OB_ };
-    }
-    if (!opcoes.confirmado) return { ok: false, precisaConfirmar: true, erro: AVISO_ABA_OB_ };
-  }
 
   verificandoEfisco_ = true;
-  await atualizarEstadoEfisco_({ emAndamento: true, progresso: "Pedindo ao app as NEs mãe...", adiadaEm: null });
+  await atualizarEstadoEfisco_({ emAndamento: true, progresso: "Pedindo ao app as NEs mãe..." });
   try {
     let lista;
     try { lista = await chamarAppGaocg_("listarNesMaeEfisco", {}); } catch (e) { lista = { ok: false, erro: String(e && e.message ? e.message : e) }; }
@@ -773,10 +759,9 @@ async function avisarObsNovas_(novas) {
 }
 
 /* ---------- anexação no app (nunca no SEI) ---------- */
-async function anexarObsEfisco_(numeros, confirmado) {
+async function anexarObsEfisco_(numeros) {
   if (verificandoEfisco_ || anexandoEfisco_) return { ok: false, erro: "Espere a busca ou a anexação em andamento terminar." };
   if (!Array.isArray(numeros) || !numeros.length) return { ok: false, erro: "Nenhuma OB escolhida." };
-  if (!confirmado && await abaDeObAberta_()) return { ok: false, precisaConfirmar: true, erro: AVISO_ABA_OB_ };
   anexandoEfisco_ = true;
   const resultados = [];
   try {
@@ -863,8 +848,8 @@ chrome.runtime.onMessage.addListener((mensagem, remetente, responder) => {
     return false;
   }
   const tarefa =
-    mensagem.type === "EFISCO_VERIFICAR" ? verificarObsEfisco_({ manual: true, confirmado: !!mensagem.confirmado }) :
-    mensagem.type === "EFISCO_ANEXAR" ? anexarObsEfisco_(mensagem.numeros, !!mensagem.confirmado) :
+    mensagem.type === "EFISCO_VERIFICAR" ? verificarObsEfisco_({ manual: true }) :
+    mensagem.type === "EFISCO_ANEXAR" ? anexarObsEfisco_(mensagem.numeros) :
     mensagem.type === "EFISCO_DISPENSAR" ? dispensarObsEfisco_(mensagem.numeros, !!mensagem.restaurar) :
     mensagem.type === "EFISCO_ABRIR_LISTA" ? abrirListaObsEfisco_().then(() => ({ ok: true })) :
     Promise.resolve({ ok: false, erro: "Pedido desconhecido." });

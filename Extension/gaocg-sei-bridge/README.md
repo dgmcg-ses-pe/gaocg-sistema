@@ -139,9 +139,8 @@ pergunta se anexa no app. **Nunca anexa no SEI** — quem junta a OB no processo
 Detalhes:
 - Na primeira busca de cada NE, as OBs que já existiam não geram aviso: ficam em
   "Anteriores", para anexar se quiser.
-- A consulta usa a tela Financeiro > Ordem Bancária do E-fisco e derruba essa tela se
-  ela estiver aberta numa aba ("Tempo de inatividade excedido"). Por isso, com ela aberta,
-  a busca automática espera e a manual pergunta antes.
+- A consulta usa a tela Financeiro > Ordem Bancária do E-fisco por conta própria e não
+  espera nem pergunta se essa tela estiver aberta numa aba (pedido do usuário, v0.62.1).
 - Arquivos: `offscreen.html`/`offscreen-efisco.js` (leitor do E-fisco), `obs-efisco.html`/
   `obs-efisco.js` (página das OBs) e o trecho "OBs do E-fisco" no fim de `background.js`.
   No backend: `ObEfisco.gs` (`listarNesMaeEfisco`, `anexarObEfiscoRecibo`, aba `ObsEfisco`).

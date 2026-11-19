@@ -524,6 +524,19 @@ const TelaRecibos = (function () {
     return `<button type="button" class="botao-icone excluir" data-acao="excluir" title="Excluir">${ICONE_LIXEIRA}</button>`;
   }
 
+  /**
+   * 1ª célula das linhas de um card de parcela dividida (pedido do usuário,
+   * 2026-11-19: "só tenha um botão de lixeira, e esse botão apaga todo o
+   * processo"). Fora do modo de seleção em lote, uma lixeira só, na 1ª linha
+   * (rowspan cobre as outras), com os ids de todas as parcelas do grupo.
+   */
+  function celulaAcaoGrupoRecibo_(r, indice, ordenadas) {
+    if (modoSelecaoLote) return `<td>${celulaAcaoLinhaRecibo_(r.id)}</td>`;
+    if (indice > 0) return '';
+    const ids = ordenadas.map(x => x.id).join(',');
+    return `<td rowspan="${ordenadas.length}" class="celula-lixeira-grupo"><button type="button" class="botao-icone excluir" data-acao="excluir" data-ids="${UI.escaparHtml(ids)}" title="Excluir o processo (todas as parcelas)">${ICONE_LIXEIRA}</button></td>`;
+  }
+
   function linhaReciboHtml_(r) {
     const unidade = unidades.find(u => u.id === r.unidade_id);
     // Destaque (sessão 2026-08-27, pedido do usuário): sem Nº Processo
@@ -592,9 +605,9 @@ const TelaRecibos = (function () {
         <div class="tabela-reforcos-wrap">
           <table class="tabela">
             <thead><tr><th></th><th>Parcela</th><th>Valor Liquidado</th><th>Valor Pago</th><th>Ordem Bancária</th><th>Status</th></tr></thead>
-            <tbody>${ordenadas.map(r => `
+            <tbody>${ordenadas.map((r, i) => `
               <tr data-id="${r.id}">
-                <td>${celulaAcaoLinhaRecibo_(r.id)}</td>
+                ${celulaAcaoGrupoRecibo_(r, i, ordenadas)}
                 <td>${r.percentual_parcela_dividida !== '' && r.percentual_parcela_dividida !== undefined ? UI.escaparHtml(String(r.percentual_parcela_dividida)) + '%' : '-'}</td>
                 <td>${UI.formatarMoeda(r.valor_liquidado)}</td>
                 <td>${UI.formatarMoeda(r.valor_pago)}${r.alerta_divergencia_valores ? ` <span class="selo vermelho" title="${UI.escaparHtml(descricaoDivergenciaValores_(r, ordenadas))}">!</span>` : ''}</td>
@@ -660,9 +673,11 @@ const TelaRecibos = (function () {
         return;
       }
       tr.addEventListener('click', () => abrirReciboExistente(tr.dataset.id));
-      tr.querySelector('[data-acao="excluir"]').addEventListener('click', e => {
+      const botaoExcluir = tr.querySelector('[data-acao="excluir"]');
+      if (!botaoExcluir) return; // demais parcelas de um grupo: a lixeira do grupo fica na 1ª linha
+      botaoExcluir.addEventListener('click', e => {
         e.stopPropagation();
-        confirmarExclusaoRecibo(tr.dataset.id);
+        confirmarExclusaoRecibo(botaoExcluir.dataset.ids ? botaoExcluir.dataset.ids.split(',') : tr.dataset.id);
       });
     });
     // Select de status: clicar pra abrir/escolher não pode "vazar" o clique
@@ -790,8 +805,10 @@ const TelaRecibos = (function () {
     });
   }
 
+  /** `id` pode ser a lista de ids das parcelas de um grupo: aí exclui todas de uma vez (excluirRecibosEmLote). */
   function confirmarExclusaoRecibo(id) {
-    const corpo = `<p class="aviso-exclusao">TEM CERTEZA QUE QUER EXCLUIR ESSE PROCESSO?</p>`;
+    const ids = Array.isArray(id) ? id : null;
+    const corpo = `<p class="aviso-exclusao">TEM CERTEZA QUE QUER EXCLUIR ESSE PROCESSO?</p>${ids && ids.length > 1 ? `<p>As ${ids.length} parcelas serão excluídas.</p>` : ''}`;
     UI.abrirModal('Excluir recibo', corpo,
       `<button class="botao" id="btnCancelarExclusaoRec">Cancelar</button><button class="botao perigo" id="btnConfirmarExclusaoRec">Excluir</button>`,
       { pequeno: true });
@@ -799,7 +816,8 @@ const TelaRecibos = (function () {
     document.getElementById('btnCancelarExclusaoRec').addEventListener('click', UI.fecharModal);
     document.getElementById('btnConfirmarExclusaoRec').addEventListener('click', async () => {
       try {
-        await Api.chamar('excluirRecibo', { id });
+        if (ids) await Api.chamar('excluirRecibosEmLote', { ids });
+        else await Api.chamar('excluirRecibo', { id });
         CacheAbas.invalidar('recibos');
         UI.toast('Recibo excluído.', 'sucesso');
         UI.fecharModal();
@@ -1853,7 +1871,6 @@ const TelaRecibos = (function () {
     const corpo = `
       <form id="formReciboEdicao">
         ${recibo.divergente_da_unidade ? '<p class="aviso-divergencia">⚠ OSS/CNPJ divergem do cadastro atual da unidade.</p>' : ''}
-        ${recibo.alerta_divergencia_valores ? '<p class="aviso-divergencia">⚠ Divergência entre valor liquidado/pago (ou soma da parcela dividida x parcela contratual).</p>' : ''}
         <div class="grade-2">
           <div class="campo"><label>Unidade</label><select disabled>${opcoesUnidade(recibo.unidade_id)}</select></div>
           <div class="campo"><label>OSS</label><input id="recEdOss" value="${UI.escaparHtml(recibo.oss_snapshot)}" /></div>

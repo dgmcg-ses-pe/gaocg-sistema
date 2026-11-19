@@ -28,7 +28,6 @@
     .botoes { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
     button.acao { background: #2f6fb3; }
     button.neutro { background: #fff; color: #333; border: 1px solid #bbb; }
-    .confirmar-efisco { font-size: 11px; background: #fff7e0; border: 1px solid #f0d58a; border-radius: 6px; padding: 6px; margin-top: 8px; }
   </style>
 </head>
 <body>
@@ -112,13 +111,6 @@
       </select>
     </label>
     <p class="situacao-efisco" id="situacaoEfisco"></p>
-    <div class="confirmar-efisco" id="confirmarEfisco" hidden>
-      <span id="confirmarEfiscoTexto"></span>
-      <div class="botoes">
-        <button type="button" class="acao" id="btnConfirmarEfisco">Buscar mesmo assim</button>
-        <button type="button" class="neutro" id="btnCancelarEfisco">Cancelar</button>
-      </div>
-    </div>
     <div class="botoes">
       <button type="button" class="acao" id="btnBuscarEfisco">Buscar OBs agora</button>
       <button type="button" class="neutro" id="btnVerEfisco">Ver OBs</button>

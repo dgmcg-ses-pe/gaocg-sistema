@@ -75,14 +75,13 @@ function contagem_(id, n) {
 function textoSituacao_(estado, emAndamento) {
   if (emAndamento) return estado.progresso || "Buscando...";
   const ultima = "Última busca: " + quando_(estado.ultimaVerificacao) + ".";
-  const adiada = estado.adiadaEm ? " A busca automática de " + quando_(estado.adiadaEm) + " esperou porque a tela de Ordem Bancária estava aberta no E-fisco." : "";
   switch (estado.situacao) {
-    case "ok": return ultima + " " + (estado.mensagem || "") + adiada;
+    case "ok": return ultima + " " + (estado.mensagem || "");
     case "sem_login": return "Entre no E-fisco neste navegador - a busca não conseguiu entrar. " + ultima;
     case "sem_app": return "Entre no app GAOCG neste navegador - a busca não conseguiu falar com o app. " + ultima;
     case "sem_tipos": return "Escolha no painel da extensão (ícone GAOCG) os tipos de unidade que você cuida.";
     case "erro": return "A última busca falhou: " + (estado.mensagem || "erro desconhecido") + " " + ultima;
-    default: return "Ainda não houve busca." + adiada;
+    default: return "Ainda não houve busca.";
   }
 }
 
@@ -121,26 +120,15 @@ async function desenhar_() {
   ["btnBuscar", "btnAnexarNovas", "btnAnexarPendentes", "btnAnexarAnteriores"].forEach(id => { $(id).disabled = ocupado; });
 }
 
-let acaoAConfirmar_ = null;
-
-/** Caixa de aviso no topo: com `acao`, pergunta (Continuar/Cancelar); sem, só informa (Fechar). */
-function mostrarCaixa_(texto, acao, sucesso) {
-  acaoAConfirmar_ = acao || null;
+/** Caixa de aviso no topo (resultado da anexação ou erro), com botão Fechar. */
+function mostrarCaixa_(texto, sucesso) {
   $("confirmacaoTexto").textContent = texto;
-  $("btnConfirmar").hidden = !acao;
-  $("btnCancelarConfirmacao").textContent = acao ? "Cancelar" : "Fechar";
   $("confirmacao").style.background = sucesso ? "#e3f5e8" : "";
   $("confirmacao").hidden = false;
   $("confirmacao").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
-$("btnConfirmar").addEventListener("click", () => {
-  const acao = acaoAConfirmar_;
-  acaoAConfirmar_ = null;
-  $("confirmacao").hidden = true;
-  if (acao) acao();
-});
-$("btnCancelarConfirmacao").addEventListener("click", () => { acaoAConfirmar_ = null; $("confirmacao").hidden = true; });
+$("btnFecharCaixa").addEventListener("click", () => { $("confirmacao").hidden = true; });
 
 async function enviar_(mensagem) {
   try {
@@ -150,25 +138,23 @@ async function enviar_(mensagem) {
   }
 }
 
-async function anexar_(numeros, confirmado) {
+async function anexar_(numeros) {
   if (!numeros.length) { mostrarCaixa_("Marque ao menos uma OB."); return; }
-  const r = await enviar_({ type: "EFISCO_ANEXAR", numeros: numeros, confirmado: !!confirmado });
-  if (r.precisaConfirmar) { mostrarCaixa_(r.erro, () => anexar_(numeros, true)); return; }
+  const r = await enviar_({ type: "EFISCO_ANEXAR", numeros: numeros });
   if (!r.ok) { mostrarCaixa_(r.erro); return; }
   const anexadas = r.resultados.filter(x => x.estado === "anexado").length;
   const jaEstavam = r.resultados.filter(x => x.estado === "ja_estava").length;
   const pendentes = r.resultados.filter(x => x.estado === "pendente").length;
   mostrarCaixa_([anexadas ? anexadas + " anexada(s) no app" : "", jaEstavam ? jaEstavam + " já estava(m) no app" : "",
-    pendentes ? pendentes + " não deu para anexar (veja o motivo em \"Não deu para anexar\")" : ""].filter(Boolean).join(", ") + ".", null, !pendentes);
+    pendentes ? pendentes + " não deu para anexar (veja o motivo em \"Não deu para anexar\")" : ""].filter(Boolean).join(", ") + ".", !pendentes);
 }
 
-async function buscar_(confirmado) {
-  const r = await enviar_({ type: "EFISCO_VERIFICAR", confirmado: !!confirmado });
-  if (r.precisaConfirmar) { mostrarCaixa_(r.erro, () => buscar_(true)); return; }
+async function buscar_() {
+  const r = await enviar_({ type: "EFISCO_VERIFICAR" });
   if (!r.ok) mostrarCaixa_(r.erro);
 }
 
-$("btnBuscar").addEventListener("click", () => buscar_(false));
+$("btnBuscar").addEventListener("click", buscar_);
 $("btnAnexarNovas").addEventListener("click", () => anexar_(marcadas_("listaNovas")));
 $("btnAnexarPendentes").addEventListener("click", () => anexar_(marcadas_("listaPendentes")));
 $("btnAnexarAnteriores").addEventListener("click", () => anexar_(marcadas_("listaAnteriores")));

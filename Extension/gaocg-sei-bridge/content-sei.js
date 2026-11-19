@@ -2553,6 +2553,8 @@ const ESTILO_CARTAO_ACOMPANHAMENTO_ = `
   .nome { display: flex; gap: 6px; align-items: flex-start; font-size: 12.5px; overflow-wrap: anywhere; cursor: pointer; margin-bottom: 4px; }
   .nome input { margin: 2px 0 0; flex: none; }
   .nome span { min-width: 0; }
+  .nome .posicao { flex: none; min-width: 22px; text-align: center; font-size: 11px; font-weight: 700; color: #fff; background: #1d5c8c; border-radius: 9px; padding: 1px 5px; }
+  .nome .posicao:empty { display: none; }
   .detalhe { font-size: 11px; opacity: .72; margin-top: 3px; }
   .alerta { font-size: 11px; font-weight: 600; color: #8a5a00; margin-top: 3px; }
   .acoes { display: flex; gap: 6px; align-items: stretch; margin-top: 8px; }
@@ -2789,6 +2791,11 @@ async function abrirConferenciaDocumentos_(registro, escolha) {
   }
 }
 
+/**
+ * A ordem dos cliques é a ordem na árvore (pedido do usuário, 2026-11-19): o SEI põe cada
+ * documento novo no fim da árvore e a fila anexa um de cada vez, na ordem em que entrou.
+ * Por isso nada vem marcado: cada documento marcado mostra a posição em que vai entrar.
+ */
 function montarConferencia_(painel, dados, selSerie) {
   const config = Object.assign({}, configAnexo_);
   const opcoesTipo = Array.from(selSerie.options).filter(o => o.value && o.value !== "null");
@@ -2811,9 +2818,11 @@ function montarConferencia_(painel, dados, selSerie) {
     const marcar = document.createElement("input");
     marcar.type = "checkbox";
     const grandeDemais = Number(arquivo.tamanho) > LIMITE_DOCUMENTO_BASE_BYTES_;
-    marcar.checked = !repetido && !grandeDemais;
+    marcar.checked = false;
     marcar.disabled = grandeDemais;
-    rotulo.append(marcar, elementoConferencia_("span", "", arquivo.nome));
+    const posicao = elementoConferencia_("span", "posicao", "");
+    posicao.title = "Posição na árvore do SEI, de cima para baixo";
+    rotulo.append(marcar, elementoConferencia_("span", "", arquivo.nome), posicao);
     const detalhe = [dataCurta_(arquivo.modificado) && "alterado em " + dataCurta_(arquivo.modificado), tamanhoCurto_(arquivo.tamanho)].filter(Boolean).join(" · ");
     const seletor = elementoConferencia_("select", "tipo");
     seletor.setAttribute("aria-label", "Tipo de " + arquivo.nome);
@@ -2826,9 +2835,9 @@ function montarConferencia_(painel, dados, selSerie) {
     item.append(rotulo, seletor, elementoConferencia_("div", "detalhe", detalhe));
     if (!deduzido) item.appendChild(elementoConferencia_("div", "alerta", "Tipo não identificado pelo nome: confira."));
     if (grandeDemais) item.appendChild(elementoConferencia_("div", "alerta", "Tem mais de 35 MB: anexe arrastando para a árvore."));
-    if (repetido) item.appendChild(elementoConferencia_("div", "alerta", "Parece já estar na árvore. Desmarcado."));
+    if (repetido) item.appendChild(elementoConferencia_("div", "alerta", "Parece já estar na árvore."));
     lista.appendChild(item);
-    linhas.push({ arquivo: arquivo, marcar: marcar, seletor: seletor, nomeArvore: nomeArvore });
+    linhas.push({ arquivo: arquivo, marcar: marcar, seletor: seletor, nomeArvore: nomeArvore, posicao: posicao });
   }
   painel.appendChild(lista);
 
@@ -2838,15 +2847,21 @@ function montarConferencia_(painel, dados, selSerie) {
   const acoes = elementoConferencia_("div", "acoes");
   const confirmar = elementoConferencia_("button", "anexar");
   confirmar.type = "button";
+  const ordem = [];
   const contar = () => {
-    const total = linhas.filter(l => l.marcar.checked).length;
-    confirmar.textContent = "Anexar " + total + " documento(s)";
-    confirmar.disabled = !total;
+    linhas.forEach(l => { const i = ordem.indexOf(l); l.posicao.textContent = i === -1 ? "" : (i + 1) + "º"; });
+    confirmar.textContent = ordem.length ? "Anexar " + ordem.length + " documento(s) nesta ordem" : "Marque os documentos na ordem da árvore";
+    confirmar.disabled = !ordem.length;
   };
-  linhas.forEach(l => l.marcar.addEventListener("change", contar));
+  linhas.forEach(l => l.marcar.addEventListener("change", () => {
+    const i = ordem.indexOf(l);
+    if (l.marcar.checked && i === -1) ordem.push(l);
+    if (!l.marcar.checked && i !== -1) ordem.splice(i, 1);
+    contar();
+  }));
   contar();
   confirmar.addEventListener("click", () => {
-    const escolhidas = linhas.filter(l => l.marcar.checked);
+    const escolhidas = ordem.slice();
     fecharConferencia_();
     for (const linha of escolhidas) {
       filaAnexos_.push({

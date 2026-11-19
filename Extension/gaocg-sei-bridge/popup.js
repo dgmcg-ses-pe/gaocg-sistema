@@ -118,7 +118,6 @@ async function mostrarEfisco_() {
   else if (estado.situacao === "erro") texto = "A última busca falhou: " + (estado.mensagem || "");
   else if (estado.ultimaVerificacao) texto = "Última busca: " + quandoEfisco_(estado.ultimaVerificacao) + ". " + (estado.mensagem || "");
   else texto = "Ainda não houve busca.";
-  if (!estado.emAndamento && estado.adiadaEm) texto += " (a busca de " + quandoEfisco_(estado.adiadaEm) + " esperou: a tela de Ordem Bancária estava aberta no E-fisco)";
   situacao.textContent = texto;
   situacao.className = "situacao-efisco" + (alerta && !estado.emAndamento ? " alerta" : "");
 
@@ -140,19 +139,11 @@ document.getElementById("intervaloEfisco").addEventListener("change", e => {
   salvarConfigEfisco_({ intervaloMin: Number(e.target.value) });
 });
 
-async function buscarEfisco_(confirmado) {
-  document.getElementById("confirmarEfisco").hidden = true;
-  let r;
-  try { r = await chrome.runtime.sendMessage({ type: "EFISCO_VERIFICAR", confirmado: !!confirmado }); } catch (e) { r = { ok: false, erro: String(e.message || e) }; }
-  if (r && r.precisaConfirmar) {
-    document.getElementById("confirmarEfiscoTexto").textContent = r.erro;
-    document.getElementById("confirmarEfisco").hidden = false;
-  }
+async function buscarEfisco_() {
+  try { await chrome.runtime.sendMessage({ type: "EFISCO_VERIFICAR" }); } catch (e) { /* a situação aparece pelo storage */ }
 }
 
-document.getElementById("btnBuscarEfisco").addEventListener("click", () => buscarEfisco_(false));
-document.getElementById("btnConfirmarEfisco").addEventListener("click", () => buscarEfisco_(true));
-document.getElementById("btnCancelarEfisco").addEventListener("click", () => { document.getElementById("confirmarEfisco").hidden = true; });
+document.getElementById("btnBuscarEfisco").addEventListener("click", buscarEfisco_);
 document.getElementById("btnVerEfisco").addEventListener("click", () => chrome.runtime.sendMessage({ type: "EFISCO_ABRIR_LISTA" }));
 
 chrome.storage.onChanged.addListener((mudancas, area) => {

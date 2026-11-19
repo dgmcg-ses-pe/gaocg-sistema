@@ -9,7 +9,8 @@
  * Fluxo de status: Aguardando análise -> Em análise (Administrador abriu) ->
  * Lida (Administrador respondeu). Editar o texto depois de "Lida" reabre pra
  * "Aguardando análise" (pedido do usuário - evita feedback desatualizado em
- * cima de um texto que já mudou).
+ * cima de um texto que já mudou). O Administrador também pode marcar
+ * "Finalizado" (2026-11-19), para o autor saber que o pedido foi resolvido.
  */
 const TelaSugestoes = (function () {
   let sugestoes = [];
@@ -18,7 +19,8 @@ const TelaSugestoes = (function () {
   const CORES_STATUS_ = {
     'Aguardando análise': 'amarelo',
     'Em análise': 'azul',
-    'Lida': 'verde'
+    'Lida': 'roxo',
+    'Finalizado': 'verde'
   };
 
   // ===== Fotos na sugestão (sessão 2026-11-09, pedido do usuário) =====
@@ -295,7 +297,7 @@ const TelaSugestoes = (function () {
             <div class="sugestao-foto" data-foto="${UI.escaparHtml(String(f.id))}"><span class="ajuda">Carregando...</span></div>`).join('')}
           </div>
         </div>` : ''}
-      ${souAutor ? '<p class="ajuda">Editar depois de respondida reabre a sugestão como "Aguardando análise".</p>' : ''}
+      ${souAutor ? '<p class="ajuda">Editar depois de respondida ou finalizada reabre a sugestão como "Aguardando análise".</p>' : ''}
       ${souAdmin
         ? `<div class="campo"><label>Feedback do Administrador</label><textarea id="detalheSugestaoFeedback" rows="4" placeholder="Escreva sua resposta...">${UI.escaparHtml(sugestao.feedback_administrador || '')}</textarea></div>`
         : (sugestao.feedback_administrador ? `<div class="campo"><label>Feedback do Administrador</label><p>${UI.escaparHtml(sugestao.feedback_administrador)}</p></div>` : '')}
@@ -303,7 +305,10 @@ const TelaSugestoes = (function () {
 
     const botoes = [];
     if (souAutor) botoes.push('<button class="botao" id="btnSalvarEdicaoSugestao">Salvar edição</button>');
-    if (souAdmin) botoes.push('<button class="botao primario" id="btnEnviarFeedback">Enviar feedback</button>');
+    if (souAdmin) {
+      if (sugestao.status !== 'Finalizado') botoes.push('<button class="botao" id="btnFinalizarSugestao" title="Marca como resolvida para quem enviou. O feedback escrito acima vai junto.">Sugestão finalizada</button>');
+      botoes.push('<button class="botao primario" id="btnEnviarFeedback">Enviar feedback</button>');
+    }
 
     UI.abrirModal('Sugestão', corpo, `<button class="botao" id="btnFecharSugestao">Fechar</button>${botoes.join('')}`);
     document.getElementById('btnFecharSugestao').addEventListener('click', UI.fecharModal);
@@ -325,6 +330,24 @@ const TelaSugestoes = (function () {
           await carregar();
         } catch (err) {
           UI.mostrarErro(erroEl, err.message);
+        }
+      });
+    }
+    const btnFinalizar = document.getElementById('btnFinalizarSugestao');
+    if (btnFinalizar) {
+      btnFinalizar.addEventListener('click', async () => {
+        const erroEl = document.getElementById('detalheSugestaoErro');
+        erroEl.classList.add('oculto');
+        const feedback = document.getElementById('detalheSugestaoFeedback').value.trim();
+        btnFinalizar.disabled = true;
+        try {
+          await Api.chamar('finalizarSugestao', { id: sugestao.id, feedback });
+          UI.toast('Sugestão marcada como finalizada.', 'sucesso');
+          UI.fecharModal();
+          await carregar();
+        } catch (err) {
+          UI.mostrarErro(erroEl, err.message);
+          btnFinalizar.disabled = false;
         }
       });
     }
