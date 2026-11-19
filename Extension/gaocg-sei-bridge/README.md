@@ -122,11 +122,35 @@ nenhum existir, ela **não falha** — deixa a tela de escolha aberta para você
 decidir, e o conteúdo entra normalmente na etapa 2. Ajuste a lista se sua
 unidade usar outro nome.
 
+## Ordens Bancárias do E-fisco (v0.62.0)
+
+A extensão avisa quando sai Ordem Bancária **paga** das NEs mãe cadastradas no app e
+pergunta se anexa no app. **Nunca anexa no SEI** — quem junta a OB no processo é outro setor.
+
+1. No painel da extensão (ícone GAOCG), marque os tipos de unidade que você cuida
+   (Hospitais, UPAs, UPAEs + Carretas) e o intervalo da busca (padrão: 30 minutos).
+2. Fique logado no app GAOCG e no E-fisco neste navegador. Sem login, a extensão
+   avisa uma vez (notificação) e tenta de novo sozinha na próxima busca.
+3. OB nova vira notificação e número no ícone. "Ver OBs" (no painel ou na notificação)
+   abre a página onde você marca quais anexar. A extensão baixa o PDF da OB no E-fisco e
+   o app a coloca no Recibo pela NE e competência (mesma leitura da OB que vem do SEI).
+   Se houver dúvida, a OB fica em "Não deu para anexar", com o motivo.
+
+Detalhes:
+- Na primeira busca de cada NE, as OBs que já existiam não geram aviso: ficam em
+  "Anteriores", para anexar se quiser.
+- A consulta usa a tela Financeiro > Ordem Bancária do E-fisco e derruba essa tela se
+  ela estiver aberta numa aba ("Tempo de inatividade excedido"). Por isso, com ela aberta,
+  a busca automática espera e a manual pergunta antes.
+- Arquivos: `offscreen.html`/`offscreen-efisco.js` (leitor do E-fisco), `obs-efisco.html`/
+  `obs-efisco.js` (página das OBs) e o trecho "OBs do E-fisco" no fim de `background.js`.
+  No backend: `ObEfisco.gs` (`listarNesMaeEfisco`, `anexarObEfiscoRecibo`, aba `ObsEfisco`).
+
 ## Configuração por ambiente
 
 | Onde | O quê | Quando mexer |
 |---|---|---|
-| `manifest.json` → `host_permissions` / `content_scripts` | `https://sei.pe.gov.br/*` | Se o SEI da sua unidade estiver em outro domínio |
+| `manifest.json` → `host_permissions` / `content_scripts` | `https://sei.pe.gov.br/*`, `https://efisco.sefaz.pe.gov.br/*` | Se o SEI ou o E-fisco mudarem de domínio |
 | `manifest.json` → `externally_connectable` | `https://andersong2021.github.io/*` | Se o GAOCG mudar de domínio. **Só origem — o Chrome ignora caminho aqui**, então não dá para restringir a `/APP-GAOCG/` |
 | `content-sei.js` → `MAPA_TIPO_DOCUMENTO` | `sof: "SOF"` | O texto tem que ser **idêntico** ao tipo de documento cadastrado no SEI da sua unidade |
 | `manifest.json` → `key` | Chave pública fixa (define o ID da extensão) | Só se precisar gerar uma chave nova - ver instalação acima |

@@ -346,7 +346,9 @@ const CHAVE_SESSAO_GAOCG_ = "sessaoGaocg";
 // só com o SEI na unidade SES-GAOCG. Também idempotente por documento do SEI.
 // preverReciboAcompanhamentoSei/criarReciboAcompanhamentoSei (2026-11-17): Recibo criado pelo cartão do
 // Acompanhamento Especial (AcompanhamentoSei.gs). A segunda grava, mas é idempotente por processo do SEI.
-const ACOES_DOCUMENTOS_GAOCG_ = ["listarDocumentosProcesso", "baixarDocumentoProcesso", "documentosSeiProcessados", "anexarDocumentoSeiRecibo", "documentosSeiNeProcessados", "anexarNeSeiSof", "preverReciboAcompanhamentoSei", "criarReciboAcompanhamentoSei"];
+// listarNesMaeEfisco/anexarObEfiscoRecibo (2026-11-19): OBs do E-fisco das NEs mãe do app (ObEfisco.gs). Só o
+// background chama (verificação periódica e página obs-efisco.html); a segunda grava, idempotente pelo número da OB.
+const ACOES_DOCUMENTOS_GAOCG_ = ["listarDocumentosProcesso", "baixarDocumentoProcesso", "documentosSeiProcessados", "anexarDocumentoSeiRecibo", "documentosSeiNeProcessados", "anexarNeSeiSof", "preverReciboAcompanhamentoSei", "criarReciboAcompanhamentoSei", "listarNesMaeEfisco", "anexarObEfiscoRecibo"];
 const ESPERAS_API_GAOCG_MS_ = [800, 2500];
 
 async function guardarSessaoGaocg_(token) {
@@ -437,6 +439,8 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
       if (message && message.type === "SESSAO_GAOCG") {
         await guardarSessaoGaocg_(message.token);
         sendResponse({ ok: true });
+        // Busca de OBs do E-fisco que parou por falta de login no app: retoma assim que ele entra.
+        if (message.token && (await lerEstadoEfisco_()).situacao === "sem_app") verificarObsEfisco_({});
         return;
       }
 
@@ -497,3 +501,394 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
   })();
   return true; // mantém o canal aberto para a resposta assíncrona
 });
+
+/* =====================================================================
+ * OBs do E-fisco (2026-11-19, pedido do usuário)
+ *
+ * De tempos em tempos (alarme), a extensão pede ao app as NEs mãe cadastradas
+ * (listarNesMaeEfisco), fica só com as dos tipos de unidade que o usuário cuida
+ * (painel: Hospitais / UPAs / UPAEs + Carretas) e consulta no E-fisco, com o login
+ * que ele já tem no navegador, as Ordens Bancárias de cada uma (offscreen-efisco.js).
+ * OB nova vira notificação; o usuário escolhe na página obs-efisco.html quais anexar
+ * e só então a extensão baixa o PDF e manda para o app (anexarObEfiscoRecibo).
+ * NUNCA anexa no SEI: quem junta a OB no processo é outro setor.
+ *
+ * - Só entra OB PAGA e assinada (o PDF só sai assinado; antes de paga ela ainda muda).
+ * - Linha de base: na 1ª consulta de cada NE, as OBs que já existiam não geram aviso -
+ *   ficam em "Anteriores" na página, para o usuário anexar se quiser.
+ * - A consulta troca o contexto da tela de Ordem Bancária no E-fisco: com essa tela
+ *   aberta numa aba, a busca automática espera, e a manual pergunta antes.
+ * ===================================================================== */
+const CHAVE_EFISCO_CONFIG_ = "efiscoConfig";        // { ativo, grupos: ["hospital", "upa", "upae_carreta"], intervaloMin }
+const CHAVE_EFISCO_ESTADO_ = "efiscoEstado";        // { situacao, mensagem, ultimaVerificacao, emAndamento, progresso, adiadaEm }
+const CHAVE_EFISCO_OBS_ = "efiscoObs";              // { "2026OB095602": { linha do E-fisco + unidade, estado, motivo, recibo... } }
+const CHAVE_EFISCO_NES_VISTAS_ = "efiscoNesVistas"; // { "2026NE000418": epoch da 1ª consulta }
+const ALARME_EFISCO_ = "efisco-obs";
+const URL_EFISCO_ = "https://efisco.sefaz.pe.gov.br/";
+const URL_APP_GAOCG_ = "https://dgmcg-ses-pe.github.io/gaocg-sistema/";
+const PADRAO_ABA_OB_EFISCO_ = "https://efisco.sefaz.pe.gov.br/sfi_fin_gfe/PRManterOrdemBancaria*";
+const GRUPOS_UNIDADE_EFISCO_ = { hospital: ["HOSPITAL"], upa: ["UPA"], upae_carreta: ["UPAE", "CARRETA"] };
+const CONFIG_EFISCO_PADRAO_ = { ativo: true, grupos: [], intervaloMin: 30 };
+const PAUSA_ENTRE_NES_MS_ = 300;
+const DIAS_GUARDAR_RESOLVIDAS_ = 60;
+
+let verificandoEfisco_ = false;
+let anexandoEfisco_ = false;
+
+async function lerConfigEfisco_() {
+  const d = await chrome.storage.local.get(CHAVE_EFISCO_CONFIG_);
+  return Object.assign({}, CONFIG_EFISCO_PADRAO_, d[CHAVE_EFISCO_CONFIG_] || {});
+}
+
+async function configurarAlarmeEfisco_() {
+  const config = await lerConfigEfisco_();
+  const atual = await chrome.alarms.get(ALARME_EFISCO_);
+  if (!config.ativo) {
+    if (atual) await chrome.alarms.clear(ALARME_EFISCO_);
+    return;
+  }
+  const periodo = Math.max(5, Number(config.intervaloMin) || CONFIG_EFISCO_PADRAO_.intervaloMin);
+  if (atual && atual.periodInMinutes === periodo) return;
+  await chrome.alarms.create(ALARME_EFISCO_, { delayInMinutes: 1, periodInMinutes: periodo });
+}
+
+async function lerEstadoEfisco_() {
+  const d = await chrome.storage.local.get(CHAVE_EFISCO_ESTADO_);
+  return d[CHAVE_EFISCO_ESTADO_] || {};
+}
+
+async function atualizarEstadoEfisco_(parcial) {
+  const atual = await lerEstadoEfisco_();
+  await chrome.storage.local.set({ [CHAVE_EFISCO_ESTADO_]: Object.assign({}, atual, parcial) });
+}
+
+/** Avisa (notificação) só quando a situação MUDA para sem login - não a cada verificação. */
+async function mudarSituacaoEfisco_(situacao, mensagem) {
+  const anterior = await lerEstadoEfisco_();
+  await atualizarEstadoEfisco_({
+    situacao: situacao, mensagem: mensagem || "", emAndamento: false, progresso: "",
+    ultimaTentativa: Date.now(), ultimaVerificacao: situacao === "ok" ? Date.now() : anterior.ultimaVerificacao
+  });
+  if (anterior.situacao === situacao) return;
+  if (situacao === "sem_login") {
+    await notificarEfisco_("efisco-login", "GAOCG: entre no E-fisco",
+      "Para buscar as Ordens Bancárias novas, entre no E-fisco neste navegador. A extensão tenta de novo sozinha.",
+      [{ title: "Abrir o E-fisco" }]);
+  } else if (situacao === "sem_app") {
+    await notificarEfisco_("efisco-app", "GAOCG: entre no app",
+      "Para buscar as Ordens Bancárias novas, entre no app GAOCG neste navegador.",
+      [{ title: "Abrir o app GAOCG" }]);
+  }
+}
+
+async function notificarEfisco_(id, titulo, mensagem, botoes) {
+  try {
+    await chrome.notifications.create(id, {
+      type: "basic", iconUrl: "icons/icon-128.png", title: titulo, message: mensagem,
+      buttons: botoes || [], requireInteraction: true, priority: 2
+    });
+  } catch (e) { /* notificações bloqueadas no sistema - o painel e o selo do ícone continuam mostrando */ }
+}
+
+/** Fila para ler-alterar-gravar efiscoObs sem uma operação apagar a outra (busca x dispensar x anexar). */
+let filaObsEfisco_ = Promise.resolve();
+function atualizarObsEfisco_(alterar) {
+  const passo = filaObsEfisco_.then(async () => {
+    const d = await chrome.storage.local.get(CHAVE_EFISCO_OBS_);
+    const obs = d[CHAVE_EFISCO_OBS_] || {};
+    const retorno = await alterar(obs);
+    await chrome.storage.local.set({ [CHAVE_EFISCO_OBS_]: obs });
+    return retorno;
+  });
+  filaObsEfisco_ = passo.catch(() => {});
+  return passo;
+}
+
+function novasParaAviso_(obs) {
+  return Object.values(obs).filter(o => o.estado === "nova" && !o.linhaDeBase);
+}
+
+async function atualizarSeloEfisco_() {
+  const d = await chrome.storage.local.get(CHAVE_EFISCO_OBS_);
+  const n = novasParaAviso_(d[CHAVE_EFISCO_OBS_] || {}).length;
+  try {
+    await chrome.action.setBadgeBackgroundColor({ color: "#2f7d4a" });
+    await chrome.action.setBadgeText({ text: n ? String(n) : "" });
+    await chrome.action.setTitle({ title: "GAOCG SEI Bridge" + (n ? " - " + n + " OB(s) nova(s) do E-fisco" : "") });
+  } catch (e) { /* sem selo não impede nada */ }
+}
+
+function normalizarTipoUnidade_(t) {
+  return String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toUpperCase();
+}
+
+function tiposDosGrupos_(grupos) {
+  return [].concat(...(grupos || []).map(g => GRUPOS_UNIDADE_EFISCO_[g] || []));
+}
+
+/* ---------- documento offscreen (leitor do E-fisco) ---------- */
+let criandoOffscreen_ = null;
+let tarefasEfisco_ = 0;
+
+async function garantirOffscreen_() {
+  const url = chrome.runtime.getURL("offscreen.html");
+  const existentes = await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"], documentUrls: [url] });
+  if (existentes.length) return;
+  if (!criandoOffscreen_) {
+    criandoOffscreen_ = chrome.offscreen.createDocument({
+      url: "offscreen.html", reasons: ["DOM_PARSER"],
+      justification: "Ler as telas de Ordem Bancária do E-fisco, com o login do próprio usuário."
+    }).finally(() => { criandoOffscreen_ = null; });
+  }
+  await criandoOffscreen_;
+}
+
+async function pedirAoEfisco_(pedido) {
+  await garantirOffscreen_();
+  const resposta = await chrome.runtime.sendMessage(Object.assign({ alvo: "offscreen-efisco" }, pedido));
+  if (!resposta) throw new Error("O leitor do E-fisco não respondeu.");
+  return resposta;
+}
+
+/** Abre o leitor para a tarefa e fecha quando nenhuma outra estiver usando. */
+async function comLeitorEfisco_(tarefa) {
+  tarefasEfisco_++;
+  try {
+    return await tarefa();
+  } finally {
+    tarefasEfisco_--;
+    if (!tarefasEfisco_) { try { await chrome.offscreen.closeDocument(); } catch (e) { /* já fechado */ } }
+  }
+}
+
+async function abaDeObAberta_() {
+  try { return (await chrome.tabs.query({ url: PADRAO_ABA_OB_EFISCO_ })).length > 0; } catch (e) { return false; }
+}
+
+const AVISO_ABA_OB_ = "A tela de Ordem Bancária está aberta numa aba do E-fisco e vai cair (\"Tempo de inatividade excedido\") se a extensão consultar agora.";
+
+/* ---------- busca ---------- */
+async function verificarObsEfisco_(opcoes) {
+  opcoes = opcoes || {};
+  const manual = !!opcoes.manual;
+  if (verificandoEfisco_ || anexandoEfisco_) return { ok: false, erro: "Já existe uma busca ou anexação em andamento." };
+  const config = await lerConfigEfisco_();
+  if (!manual && !config.ativo) return { ok: false, erro: "A busca automática está desligada." };
+  const tipos = tiposDosGrupos_(config.grupos);
+  if (!tipos.length) {
+    await mudarSituacaoEfisco_("sem_tipos", "Escolha no painel da extensão os tipos de unidade que você cuida.");
+    return { ok: false, erro: "Escolha os tipos de unidade que você cuida." };
+  }
+  if (await abaDeObAberta_()) {
+    if (!manual) {
+      await atualizarEstadoEfisco_({ adiadaEm: Date.now() });
+      return { ok: false, adiada: true, erro: AVISO_ABA_OB_ };
+    }
+    if (!opcoes.confirmado) return { ok: false, precisaConfirmar: true, erro: AVISO_ABA_OB_ };
+  }
+
+  verificandoEfisco_ = true;
+  await atualizarEstadoEfisco_({ emAndamento: true, progresso: "Pedindo ao app as NEs mãe...", adiadaEm: null });
+  try {
+    let lista;
+    try { lista = await chamarAppGaocg_("listarNesMaeEfisco", {}); } catch (e) { lista = { ok: false, erro: String(e && e.message ? e.message : e) }; }
+    if (!lista.ok) {
+      const semApp = /Entre no app GAOCG/.test(lista.erro || "");
+      await mudarSituacaoEfisco_(semApp ? "sem_app" : "erro", lista.erro || "O app GAOCG não respondeu.");
+      return { ok: false, erro: lista.erro };
+    }
+    const nes = (lista.dados.nes || []).filter(n => tipos.indexOf(normalizarTipoUnidade_(n.tipo_unidade)) !== -1);
+    const noApp = new Set((lista.dados.obs_no_app || []).map(x => String(x).toUpperCase()));
+    const vistas = (await chrome.storage.local.get(CHAVE_EFISCO_NES_VISTAS_))[CHAVE_EFISCO_NES_VISTAS_] || {};
+    const conhecidas = new Set(Object.keys((await chrome.storage.local.get(CHAVE_EFISCO_OBS_))[CHAVE_EFISCO_OBS_] || {}));
+    const achadas = {};
+    let consultadas = 0;
+    let falha = null;
+
+    await comLeitorEfisco_(async () => {
+      for (const ne of nes) {
+        await atualizarEstadoEfisco_({ progresso: "Consultando a NE " + ne.numero_ne + " (" + (consultadas + 1) + " de " + nes.length + ")..." });
+        let r;
+        try { r = await pedirAoEfisco_({ tipo: "LISTAR_OBS_NE", ne: ne.numero_ne }); } catch (e) { r = { ok: false, erro: String(e && e.message ? e.message : e) }; }
+        if (!r.ok) { falha = r; break; }
+        const linhaDeBase = !vistas[ne.numero_ne];
+        r.dados.forEach(l => {
+          if (l.situacao !== "PAGA" || !l.assinado) return;
+          if (noApp.has(l.numero_ob) || conhecidas.has(l.numero_ob) || achadas[l.numero_ob]) return;
+          achadas[l.numero_ob] = Object.assign({}, l, {
+            ne_mae: ne.numero_ne, unidade: ne.unidade, tipo_unidade: ne.tipo_unidade, objeto: ne.objeto,
+            estado: "nova", linhaDeBase: linhaDeBase, achadaEm: Date.now(), atualizadaEm: Date.now()
+          });
+        });
+        vistas[ne.numero_ne] = vistas[ne.numero_ne] || Date.now();
+        consultadas++;
+        await new Promise(res => setTimeout(res, PAUSA_ENTRE_NES_MS_));
+      }
+    });
+
+    // Grava o que deu para consultar, mesmo que tenha parado no meio.
+    await chrome.storage.local.set({ [CHAVE_EFISCO_NES_VISTAS_]: vistas });
+    const limite = Date.now() - DIAS_GUARDAR_RESOLVIDAS_ * 86400000;
+    await atualizarObsEfisco_(obs => {
+      Object.values(obs).forEach(o => {
+        // Entrou no app por outro caminho (formulário, SEI): sai da lista.
+        if (noApp.has(o.numero_ob) && (o.estado === "nova" || o.estado === "pendente")) { o.estado = "no_app"; o.atualizadaEm = Date.now(); }
+        if (["anexado", "ja_estava", "no_app"].indexOf(o.estado) !== -1 && (o.atualizadaEm || 0) < limite) delete obs[o.numero_ob];
+      });
+      Object.keys(achadas).forEach(k => { if (!obs[k]) obs[k] = achadas[k]; });
+    });
+    await atualizarSeloEfisco_();
+
+    const novas = Object.values(achadas).filter(o => !o.linhaDeBase);
+    if (novas.length) await avisarObsNovas_(novas);
+
+    if (falha) {
+      await mudarSituacaoEfisco_(falha.semLogin ? "sem_login" : "erro", falha.semLogin ? "Entre no E-fisco neste navegador." : falha.erro);
+      return { ok: false, erro: falha.erro, novas: novas.length };
+    }
+    await mudarSituacaoEfisco_("ok", nes.length
+      ? consultadas + " NE(s) mãe consultada(s)" + (novas.length ? ", " + novas.length + " OB(s) nova(s)." : ", nenhuma OB nova.")
+      : "Nenhuma NE mãe no app para os tipos de unidade escolhidos.");
+    return { ok: true, consultadas: consultadas, novas: novas.length };
+  } catch (erro) {
+    await mudarSituacaoEfisco_("erro", String(erro && erro.message ? erro.message : erro));
+    return { ok: false, erro: String(erro && erro.message ? erro.message : erro) };
+  } finally {
+    verificandoEfisco_ = false;
+    await atualizarEstadoEfisco_({ emAndamento: false, progresso: "" });
+  }
+}
+
+function moedaBr_(n) {
+  return typeof n === "number" ? n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "";
+}
+
+async function avisarObsNovas_(novas) {
+  const linhas = novas.slice(0, 3).map(o => o.numero_ob + " · " + (o.unidade || o.ne) + " · " + moedaBr_(o.valor));
+  if (novas.length > 3) linhas.push("e mais " + (novas.length - 3) + "...");
+  await notificarEfisco_("efisco-novas-" + Date.now(),
+    novas.length === 1 ? "GAOCG: 1 Ordem Bancária nova no E-fisco" : "GAOCG: " + novas.length + " Ordens Bancárias novas no E-fisco",
+    linhas.join("\n") + "\nQuer anexar no app?",
+    [{ title: "Ver e escolher quais anexar" }]);
+}
+
+/* ---------- anexação no app (nunca no SEI) ---------- */
+async function anexarObsEfisco_(numeros, confirmado) {
+  if (verificandoEfisco_ || anexandoEfisco_) return { ok: false, erro: "Espere a busca ou a anexação em andamento terminar." };
+  if (!Array.isArray(numeros) || !numeros.length) return { ok: false, erro: "Nenhuma OB escolhida." };
+  if (!confirmado && await abaDeObAberta_()) return { ok: false, precisaConfirmar: true, erro: AVISO_ABA_OB_ };
+  anexandoEfisco_ = true;
+  const resultados = [];
+  try {
+    const todas = (await chrome.storage.local.get(CHAVE_EFISCO_OBS_))[CHAVE_EFISCO_OBS_] || {};
+    await comLeitorEfisco_(async () => {
+      for (const numero of numeros) {
+        const ob = todas[numero];
+        if (!ob) continue;
+        await atualizarObsEfisco_(obs => { if (obs[numero]) Object.assign(obs[numero], { estado: "anexando", motivo: "" }); });
+        let resultado;
+        let parar = false;
+        try {
+          const pdf = await pedirAoEfisco_({ tipo: "BAIXAR_PDF_OB", ne: ob.ne || ob.ne_mae, numeroOb: numero });
+          if (!pdf.ok) {
+            resultado = { estado: "pendente", motivo: pdf.semLogin ? "Entre no E-fisco neste navegador e tente de novo." : pdf.erro };
+            if (pdf.semLogin) { parar = true; await mudarSituacaoEfisco_("sem_login", "Entre no E-fisco neste navegador."); }
+          } else {
+            const r = await chamarAppGaocg_("anexarObEfiscoRecibo", {
+              numero_ob: numero, ne: ob.ne || ob.ne_mae, data_ob: ob.data, valor_efisco: ob.valor,
+              arquivoBase64: pdf.dados.base64, reanexar: true
+            });
+            if (!r.ok) {
+              resultado = { estado: "pendente", motivo: r.erro };
+              if (/Entre no app GAOCG/.test(r.erro || "")) parar = true;
+            } else {
+              const d = r.dados;
+              resultado = {
+                estado: d.resultado === "anexado" || d.resultado === "ja_estava" ? d.resultado : "pendente",
+                motivo: d.motivo || "", recibo_id: d.recibo_id || "", recibo_descricao: d.recibo_descricao || ""
+              };
+              if (d.resultado === "anexado") {
+                avisarAppRecibosAlterados_([{
+                  recibo_id: d.recibo_id, recibo_descricao: d.recibo_descricao || "",
+                  texto: "OB " + numero + " do E-fisco anexada no recibo " + d.recibo_id + (d.recibo_descricao ? " (" + d.recibo_descricao + ")" : "")
+                }]);
+              }
+            }
+          }
+        } catch (erro) {
+          resultado = { estado: "pendente", motivo: String(erro && erro.message ? erro.message : erro) };
+        }
+        resultado.atualizadaEm = Date.now();
+        await atualizarObsEfisco_(obs => { if (obs[numero]) Object.assign(obs[numero], resultado); });
+        resultados.push(Object.assign({ numero_ob: numero }, resultado));
+        if (parar) break;
+      }
+    });
+  } finally {
+    anexandoEfisco_ = false;
+    // OB que não chegou a ser tentada (parou no meio) volta para "nova".
+    await atualizarObsEfisco_(obs => Object.values(obs).forEach(o => { if (o.estado === "anexando") o.estado = "nova"; }));
+    await atualizarSeloEfisco_();
+  }
+  return { ok: true, resultados: resultados };
+}
+
+async function dispensarObsEfisco_(numeros, restaurar) {
+  await atualizarObsEfisco_(obs => (numeros || []).forEach(n => {
+    if (!obs[n]) return;
+    if (restaurar && obs[n].estado === "dispensada") obs[n].estado = "nova";
+    else if (!restaurar && (obs[n].estado === "nova" || obs[n].estado === "pendente")) obs[n].estado = "dispensada";
+    obs[n].atualizadaEm = Date.now();
+  }));
+  await atualizarSeloEfisco_();
+  return { ok: true };
+}
+
+async function abrirListaObsEfisco_() {
+  const url = chrome.runtime.getURL("obs-efisco.html");
+  const abas = await chrome.tabs.query({ url: url });
+  if (abas.length) {
+    await chrome.tabs.update(abas[0].id, { active: true });
+    try { await chrome.windows.update(abas[0].windowId, { focused: true }); } catch (e) { /* janela sumiu */ }
+  } else {
+    await chrome.tabs.create({ url: url, active: true });
+  }
+}
+
+/** Mensagens do painel (popup.html) e da página obs-efisco.html - só de páginas da própria extensão. */
+chrome.runtime.onMessage.addListener((mensagem, remetente, responder) => {
+  if (!mensagem || typeof mensagem.type !== "string" || mensagem.type.indexOf("EFISCO_") !== 0) return false;
+  if (remetente.id !== chrome.runtime.id || String(remetente.url || "").indexOf(chrome.runtime.getURL("")) !== 0) {
+    responder({ ok: false, erro: "Origem não permitida." });
+    return false;
+  }
+  const tarefa =
+    mensagem.type === "EFISCO_VERIFICAR" ? verificarObsEfisco_({ manual: true, confirmado: !!mensagem.confirmado }) :
+    mensagem.type === "EFISCO_ANEXAR" ? anexarObsEfisco_(mensagem.numeros, !!mensagem.confirmado) :
+    mensagem.type === "EFISCO_DISPENSAR" ? dispensarObsEfisco_(mensagem.numeros, !!mensagem.restaurar) :
+    mensagem.type === "EFISCO_ABRIR_LISTA" ? abrirListaObsEfisco_().then(() => ({ ok: true })) :
+    Promise.resolve({ ok: false, erro: "Pedido desconhecido." });
+  tarefa.then(responder).catch(erro => responder({ ok: false, erro: String(erro && erro.message ? erro.message : erro) }));
+  return true;
+});
+
+chrome.alarms.onAlarm.addListener(alarme => {
+  if (alarme.name === ALARME_EFISCO_) verificarObsEfisco_({});
+});
+
+function aoClicarNotificacaoEfisco_(id) {
+  if (id.indexOf("efisco-novas-") === 0) abrirListaObsEfisco_();
+  else if (id === "efisco-login") chrome.tabs.create({ url: URL_EFISCO_, active: true });
+  else if (id === "efisco-app") chrome.tabs.create({ url: URL_APP_GAOCG_, active: true });
+  else return;
+  chrome.notifications.clear(id);
+}
+chrome.notifications.onClicked.addListener(aoClicarNotificacaoEfisco_);
+chrome.notifications.onButtonClicked.addListener(id => aoClicarNotificacaoEfisco_(id));
+
+chrome.storage.onChanged.addListener((mudancas, area) => {
+  if (area === "local" && mudancas[CHAVE_EFISCO_CONFIG_]) configurarAlarmeEfisco_();
+});
+chrome.runtime.onInstalled.addListener(() => { configurarAlarmeEfisco_(); atualizarSeloEfisco_(); });
+chrome.runtime.onStartup.addListener(() => { configurarAlarmeEfisco_(); atualizarSeloEfisco_(); });
+configurarAlarmeEfisco_();

@@ -66,3 +66,96 @@ chrome.storage.local.get([CHAVE_FERRAMENTAS_SEI_, CHAVE_ANOTACAO_SEI_, CHAVE_ACO
     chrome.storage.local.set({ [CHAVE_ANEXO_NIVEL_]: nivel.value });
   });
 });
+
+/**
+ * Ordens Bancárias do E-fisco (2026-11-19, pedido do usuário): liga/desliga a busca
+ * automática, os tipos de unidade que o usuário cuida (no setor GAOCG a divisão é
+ * Hospitais / UPAs / UPAEs + Carretas) e o intervalo. Quem busca é o background.js.
+ */
+const CHAVE_EFISCO_CONFIG_ = "efiscoConfig";
+const CHAVE_EFISCO_ESTADO_ = "efiscoEstado";
+const CHAVE_EFISCO_OBS_ = "efiscoObs";
+const CONFIG_EFISCO_PADRAO_ = { ativo: true, grupos: [], intervaloMin: 30 };
+
+async function lerConfigEfisco_() {
+  const d = await chrome.storage.local.get(CHAVE_EFISCO_CONFIG_);
+  return Object.assign({}, CONFIG_EFISCO_PADRAO_, d[CHAVE_EFISCO_CONFIG_] || {});
+}
+
+async function salvarConfigEfisco_(parcial) {
+  const atual = await lerConfigEfisco_();
+  await chrome.storage.local.set({ [CHAVE_EFISCO_CONFIG_]: Object.assign(atual, parcial) });
+}
+
+function quandoEfisco_(ms) {
+  return ms ? new Date(ms).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "";
+}
+
+async function mostrarEfisco_() {
+  const config = await lerConfigEfisco_();
+  const d = await chrome.storage.local.get([CHAVE_EFISCO_ESTADO_, CHAVE_EFISCO_OBS_]);
+  const estado = d[CHAVE_EFISCO_ESTADO_] || {};
+  const novas = Object.values(d[CHAVE_EFISCO_OBS_] || {}).filter(o => o.estado === "nova" && !o.linhaDeBase).length;
+
+  const status = document.getElementById("statusEfisco");
+  const botao = document.getElementById("btnEfisco");
+  status.textContent = config.ativo ? "Busca automática ligada" : "Busca automática desligada";
+  status.className = "status " + (config.ativo ? "ativo" : "inativo");
+  botao.textContent = config.ativo ? "Desativar" : "Ativar";
+  botao.className = config.ativo ? "desativar" : "ativar";
+  botao.disabled = false;
+
+  document.querySelectorAll("#gruposEfisco input").forEach(c => { c.checked = (config.grupos || []).indexOf(c.value) !== -1; });
+  document.getElementById("intervaloEfisco").value = String(config.intervaloMin);
+
+  const situacao = document.getElementById("situacaoEfisco");
+  const alerta = ["sem_login", "sem_app", "sem_tipos", "erro"].indexOf(estado.situacao) !== -1;
+  let texto;
+  if (estado.emAndamento) texto = estado.progresso || "Buscando...";
+  else if (!(config.grupos || []).length) texto = "Marque acima os tipos de unidade que você cuida.";
+  else if (estado.situacao === "sem_login") texto = "Entre no E-fisco neste navegador.";
+  else if (estado.situacao === "sem_app") texto = "Entre no app GAOCG neste navegador.";
+  else if (estado.situacao === "erro") texto = "A última busca falhou: " + (estado.mensagem || "");
+  else if (estado.ultimaVerificacao) texto = "Última busca: " + quandoEfisco_(estado.ultimaVerificacao) + ". " + (estado.mensagem || "");
+  else texto = "Ainda não houve busca.";
+  if (!estado.emAndamento && estado.adiadaEm) texto += " (a busca de " + quandoEfisco_(estado.adiadaEm) + " esperou: a tela de Ordem Bancária estava aberta no E-fisco)";
+  situacao.textContent = texto;
+  situacao.className = "situacao-efisco" + (alerta && !estado.emAndamento ? " alerta" : "");
+
+  document.getElementById("btnBuscarEfisco").disabled = !!estado.emAndamento;
+  document.getElementById("btnVerEfisco").textContent = novas ? "Ver OBs (" + novas + " nova" + (novas > 1 ? "s" : "") + ")" : "Ver OBs";
+}
+
+document.getElementById("btnEfisco").addEventListener("click", async () => {
+  const config = await lerConfigEfisco_();
+  await salvarConfigEfisco_({ ativo: !config.ativo });
+});
+
+document.querySelectorAll("#gruposEfisco input").forEach(c => c.addEventListener("change", () => {
+  const grupos = Array.from(document.querySelectorAll("#gruposEfisco input:checked")).map(x => x.value);
+  salvarConfigEfisco_({ grupos: grupos });
+}));
+
+document.getElementById("intervaloEfisco").addEventListener("change", e => {
+  salvarConfigEfisco_({ intervaloMin: Number(e.target.value) });
+});
+
+async function buscarEfisco_(confirmado) {
+  document.getElementById("confirmarEfisco").hidden = true;
+  let r;
+  try { r = await chrome.runtime.sendMessage({ type: "EFISCO_VERIFICAR", confirmado: !!confirmado }); } catch (e) { r = { ok: false, erro: String(e.message || e) }; }
+  if (r && r.precisaConfirmar) {
+    document.getElementById("confirmarEfiscoTexto").textContent = r.erro;
+    document.getElementById("confirmarEfisco").hidden = false;
+  }
+}
+
+document.getElementById("btnBuscarEfisco").addEventListener("click", () => buscarEfisco_(false));
+document.getElementById("btnConfirmarEfisco").addEventListener("click", () => buscarEfisco_(true));
+document.getElementById("btnCancelarEfisco").addEventListener("click", () => { document.getElementById("confirmarEfisco").hidden = true; });
+document.getElementById("btnVerEfisco").addEventListener("click", () => chrome.runtime.sendMessage({ type: "EFISCO_ABRIR_LISTA" }));
+
+chrome.storage.onChanged.addListener((mudancas, area) => {
+  if (area === "local" && (mudancas[CHAVE_EFISCO_CONFIG_] || mudancas[CHAVE_EFISCO_ESTADO_] || mudancas[CHAVE_EFISCO_OBS_])) mostrarEfisco_();
+});
+mostrarEfisco_();

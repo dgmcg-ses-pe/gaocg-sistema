@@ -21,6 +21,14 @@
     .campo input, .campo select { display: block; width: 100%; box-sizing: border-box; font: inherit; color: #222; padding: 4px 6px; margin-top: 2px; }
     .caixa { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #222; margin-top: 8px; }
     .rodape { font-size: 11px; color: #777; margin: 4px 0 0; }
+    .grupos { display: grid; gap: 2px; margin-top: 6px; }
+    .grupos .caixa { margin-top: 0; }
+    .situacao-efisco { font-size: 11px; color: #555; margin: 8px 0 0; }
+    .situacao-efisco.alerta { color: #a12a2a; font-weight: 600; }
+    .botoes { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+    button.acao { background: #2f6fb3; }
+    button.neutro { background: #fff; color: #333; border: 1px solid #bbb; }
+    .confirmar-efisco { font-size: 11px; background: #fff7e0; border: 1px solid #f0d58a; border-radius: 6px; padding: 6px; margin-top: 8px; }
   </style>
 </head>
 <body>
@@ -80,6 +88,40 @@
     <div class="linha">
       <span class="status" id="statusReciboSei">…</span>
       <button type="button" id="btnReciboSei" disabled>…</button>
+    </div>
+  </div>
+
+  <div class="item">
+    <p class="item-titulo">Ordens Bancárias do E-fisco</p>
+    <p>Avisa quando sai OB paga das NEs mãe do app, das unidades que você cuida, e pergunta se anexa no app (nunca no SEI). Precisa estar logado no app e no E-fisco neste navegador.</p>
+    <div class="linha">
+      <span class="status" id="statusEfisco">…</span>
+      <button type="button" id="btnEfisco" disabled>…</button>
+    </div>
+    <div class="grupos" id="gruposEfisco">
+      <label class="caixa"><input type="checkbox" value="hospital"> Hospitais</label>
+      <label class="caixa"><input type="checkbox" value="upa"> UPAs</label>
+      <label class="caixa"><input type="checkbox" value="upae_carreta"> UPAEs + Carretas</label>
+    </div>
+    <label class="campo" for="intervaloEfisco">Buscar a cada
+      <select id="intervaloEfisco">
+        <option value="15">15 minutos</option>
+        <option value="30">30 minutos</option>
+        <option value="60">1 hora</option>
+        <option value="120">2 horas</option>
+      </select>
+    </label>
+    <p class="situacao-efisco" id="situacaoEfisco"></p>
+    <div class="confirmar-efisco" id="confirmarEfisco" hidden>
+      <span id="confirmarEfiscoTexto"></span>
+      <div class="botoes">
+        <button type="button" class="acao" id="btnConfirmarEfisco">Buscar mesmo assim</button>
+        <button type="button" class="neutro" id="btnCancelarEfisco">Cancelar</button>
+      </div>
+    </div>
+    <div class="botoes">
+      <button type="button" class="acao" id="btnBuscarEfisco">Buscar OBs agora</button>
+      <button type="button" class="neutro" id="btnVerEfisco">Ver OBs</button>
     </div>
   </div>
 

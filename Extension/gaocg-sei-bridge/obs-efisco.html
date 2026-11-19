@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OBs do E-fisco - GAOCG</title>
+  <style>
+    :root { --verde: #2f7d4a; --vermelho: #b33a3a; --borda: #ddd; --suave: #666; --fundo: #f6f7f9; }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; margin: 0; background: var(--fundo); color: #222; }
+    main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 40px; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    .sub { color: var(--suave); font-size: 13px; margin: 0 0 16px; }
+    .aviso { background: #fff7e0; border: 1px solid #f0d58a; border-radius: 6px; padding: 10px 12px; font-size: 13px; margin-bottom: 12px; }
+    .aviso button { margin-top: 8px; }
+    .situacao { background: #fff; border: 1px solid var(--borda); border-radius: 6px; padding: 10px 12px; font-size: 13px; margin-bottom: 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: space-between; }
+    section { background: #fff; border: 1px solid var(--borda); border-radius: 6px; margin-bottom: 16px; }
+    section > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--borda); flex-wrap: wrap; }
+    section h2 { font-size: 15px; margin: 0; }
+    .vazio { padding: 12px; color: var(--suave); font-size: 13px; }
+    .tabela { width: 100%; overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #eee; vertical-align: top; }
+    th { background: #fafafa; font-weight: 600; white-space: nowrap; }
+    td.valor { text-align: right; white-space: nowrap; }
+    td.motivo { color: #8a4b00; max-width: 380px; }
+    td.ok { color: var(--verde); }
+    .acoes { display: flex; gap: 8px; flex-wrap: wrap; }
+    button { font: inherit; font-size: 13px; font-weight: 600; padding: 6px 12px; border-radius: 6px; border: 0; cursor: pointer; color: #fff; background: var(--verde); }
+    button.secundario { background: #fff; color: #333; border: 1px solid #bbb; }
+    button.perigo { background: var(--vermelho); }
+    button:disabled { opacity: .55; cursor: default; }
+    details > summary { cursor: pointer; padding: 10px 12px; font-weight: 600; font-size: 14px; }
+    .etiqueta { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 10px; background: #eef; color: #335; }
+    .etiqueta.andamento { background: #e8f0ff; color: #1d4fa3; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Ordens Bancárias do E-fisco</h1>
+    <p class="sub">OBs pagas das NEs mãe do app, das unidades que você escolheu no painel da extensão. As escolhidas são anexadas <strong>só no app GAOCG</strong> (no Recibo) — nunca no processo do SEI.</p>
+
+    <div id="confirmacao" class="aviso" hidden>
+      <span id="confirmacaoTexto"></span><br>
+      <button type="button" id="btnConfirmar">Continuar mesmo assim</button>
+      <button type="button" class="secundario" id="btnCancelarConfirmacao">Cancelar</button>
+    </div>
+
+    <div class="situacao">
+      <span id="situacao">…</span>
+      <div class="acoes">
+        <button type="button" class="secundario" id="btnBuscar">Buscar OBs agora</button>
+      </div>
+    </div>
+
+    <section id="secNovas">
+      <header>
+        <h2>Novas <span id="qtdNovas"></span></h2>
+        <div class="acoes">
+          <button type="button" id="btnAnexarNovas">Anexar no app as marcadas</button>
+          <button type="button" class="secundario" id="btnDispensarNovas">Dispensar as marcadas</button>
+        </div>
+      </header>
+      <div id="listaNovas"></div>
+    </section>
+
+    <section id="secPendentes">
+      <header>
+        <h2>Não deu para anexar <span id="qtdPendentes"></span></h2>
+        <div class="acoes">
+          <button type="button" id="btnAnexarPendentes">Tentar de novo as marcadas</button>
+          <button type="button" class="secundario" id="btnDispensarPendentes">Dispensar as marcadas</button>
+        </div>
+      </header>
+      <div id="listaPendentes"></div>
+    </section>
+
+    <section>
+      <details id="detAnteriores">
+        <summary>Anteriores, que já existiam na 1ª busca e ainda não estão no app <span id="qtdAnteriores"></span></summary>
+        <div class="acoes" style="padding: 0 12px 10px">
+          <button type="button" id="btnAnexarAnteriores">Anexar no app as marcadas</button>
+          <button type="button" class="secundario" id="btnDispensarAnteriores">Dispensar as marcadas</button>
+        </div>
+        <div id="listaAnteriores"></div>
+      </details>
+    </section>
+
+    <section>
+      <details>
+        <summary>Anexadas recentemente <span id="qtdResolvidas"></span></summary>
+        <div id="listaResolvidas"></div>
+      </details>
+    </section>
+
+    <section>
+      <details>
+        <summary>Dispensadas <span id="qtdDispensadas"></span></summary>
+        <div class="acoes" style="padding: 0 12px 10px">
+          <button type="button" class="secundario" id="btnRestaurar">Voltar as marcadas para a lista</button>
+        </div>
+        <div id="listaDispensadas"></div>
+      </details>
+    </section>
+  </main>
+  <script src="obs-efisco.js"></script>
+</body>
+</html>
