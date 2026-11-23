@@ -155,6 +155,9 @@ Detalhes:
 - Os documentos são baixados do app dois de cada vez enquanto o anterior sobe no SEI, e o app
   não percorre mais as pastas do Drive para um arquivo que acabou de listar. O console do SEI
   mostra o tempo de cada um ("[GAOCG anexo] ... esperou o arquivo X ms, SEI Y ms").
+- v0.63.1: o cartão "Do SEI para o app" tenta cada LE/OB/NE pendente uma vez por abertura do
+  processo (antes recomeçava a cada recarga da árvore, baixando tudo de novo do SEI) e espera a
+  fila de anexos terminar antes de baixar qualquer coisa do SEI.
 
 ## Configuração por ambiente
 

@@ -3246,7 +3246,7 @@ const REGEX_NOME_LE_OB_ = /ordem\s+banc|nota\s+de\s+liquida|\d{4}\s*(?:LE|OB)\s*
 // SEI na unidade SES-GAOCG - é lá que as NEs entram no processo da SOF.
 const REGEX_NOME_NE_ = /\d{4}\s*NE\s*\d{6}|nota\s+de\s+empenho/i;
 const SIGLA_UNIDADE_NE_ = "SES-GAOCG";
-const estadoReciboSei_ = { raiz: null, chave: "", execucao: null, arvore: null, interrompido: false, itens: [], semSof: false };
+const estadoReciboSei_ = { raiz: null, chave: "", execucao: null, arvore: null, interrompido: false, itens: [], semSof: false, tentados: new Set() };
 
 /** Sigla da unidade em que o usuário está logado no SEI (topo da tela), sem espaços: "SES-GAOCG". */
 function siglaUnidadeSei_() {
@@ -3397,6 +3397,11 @@ function textoProgressoHtml_(item) {
  * primeira anexação (sincronizarReciboSei_) e no "Anexar de novo". `vigente` diz se o
  * cartão ainda é o da vez (a árvore pode ter recarregado no meio).
  */
+/** Enquanto documentos sobem para o SEI, as conferências em segundo plano esperam a vez. */
+async function esperarFilaDeAnexos_() {
+  while (anexoEmAndamento_) await esperar_(500);
+}
+
 async function processarItemReciboSei_(item, arvore, extras, vigente) {
   const pintar = () => { if (!vigente || vigente()) atualizarProgressoItem_(item); };
   item.lendo = true;
@@ -3567,11 +3572,20 @@ async function sincronizarReciboSei_(arvore) {
     e.itens.forEach(item => { item.registro = porId[item.id] || (item.registro && item.registro.final ? item.registro : null); });
     pintarCartaoReciboSei_();
 
+    // Lentidão ao anexar (2026-11-23): a árvore recarrega depois de cada anexo e esta conferência
+    // recomeçava, baixando de novo do SEI toda LE/OB pendente - e cada download segura o SEI
+    // enquanto o anexo do usuário espera. Agora cada documento é tentado uma vez por abertura do
+    // processo (reabrir o processo tenta de novo), e nada é baixado enquanto a fila de anexos anda.
+    const chaveTentativa = item => arvore.idProcesso + ":" + item.id;
     let anexouNe = false;
     for (const item of e.itens) {
       if (!vigente()) return;
       if (!reciboSeiAtivo_) { e.interrompido = true; return; }
       if (item.registro && item.registro.final) continue;
+      if (e.tentados.has(chaveTentativa(item))) continue;
+      await esperarFilaDeAnexos_();
+      if (!vigente()) return;
+      e.tentados.add(chaveTentativa(item));
       await processarItemReciboSei_(item, arvore, null, vigente);
       if (item.fluxo === "ne" && item.registro && item.registro.resultado === "anexado") anexouNe = true;
     }
@@ -3579,7 +3593,11 @@ async function sincronizarReciboSei_(arvore) {
     if (anexouNe) {
       for (const item of e.itens) {
         if (!vigente() || !reciboSeiAtivo_) return;
-        if (item.fluxo === "ne" && item.registro && item.registro.aguardando_mae) await processarItemReciboSei_(item, arvore, null, vigente);
+        if (item.fluxo === "ne" && item.registro && item.registro.aguardando_mae) {
+          await esperarFilaDeAnexos_();
+          if (!vigente()) return;
+          await processarItemReciboSei_(item, arvore, null, vigente);
+        }
       }
     }
   } finally {
@@ -3629,7 +3647,7 @@ function montarCartaoReciboSei_(doc, arvore) {
   estadoReciboSei_.chave = chave;
   estadoReciboSei_.itens = arvore.documentos.map(d => {
     const antes = anteriores.find(a => a.id === d.id);
-    return { id: d.id, nome: d.nome, url: d.url, fluxo: d.fluxo, registro: antes ? antes.registro : null, erro: "", lendo: false };
+    return { id: d.id, nome: d.nome, url: d.url, fluxo: d.fluxo, registro: antes ? antes.registro : null, erro: antes ? antes.erro : "", lendo: false };
   });
   pintarCartaoReciboSei_();
   sincronizarReciboSei_(arvore);
