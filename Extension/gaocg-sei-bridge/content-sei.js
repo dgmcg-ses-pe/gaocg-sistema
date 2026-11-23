@@ -1651,13 +1651,17 @@ async function anexarArquivoNoSei_(arquivo, config) {
     throw new Error('Não encontrei "Incluir Documento" neste processo. Confira se ele está aberto na sua unidade.');
   }
 
+  // Tempo de cada etapa no console (2026-11-23): o mesmo arquivo variava de 1 s a 21 s no SEI.
+  const marcas = [performance.now()];
   const cadastro = await abrirCadastroExterno_(linkTipos);
+  marcas.push(performance.now());
   const form = cadastro.doc.querySelector("#frmDocumentoCadastro");
   if (!form) throw new Error("O cadastro do Documento Externo não abriu.");
   const urlUpload = urlUploadDoCadastro_(cadastro);
   if (!urlUpload) throw new Error("Não encontrei o endereço de upload na tela do SEI.");
 
   const anexo = await subirArquivoSei_(arquivo, urlUpload, cadastro);
+  marcas.push(performance.now());
   const { campos, tipo } = camposDoCadastroExterno_(form, arquivo, config, anexo, autorDoAnexo_(cadastro.texto));
 
   let salvo;
@@ -1671,7 +1675,9 @@ async function anexarArquivoNoSei_(arquivo, config) {
     throw new Error("O SEI não confirmou a gravação (" + e.message + "). Confira a árvore antes de enviar de novo.");
   }
 
-  if (/acao=arvore_visualizar/.test(salvo.url) && !salvo.doc.querySelector("#frmDocumentoCadastro")) return { tipo: tipo };
+  marcas.push(performance.now());
+  const tempos = ["abrir cadastro", "enviar arquivo", "gravar"].map((etapa, i) => etapa + " " + Math.round(marcas[i + 1] - marcas[i]) + " ms").join(", ");
+  if (/acao=arvore_visualizar/.test(salvo.url) && !salvo.doc.querySelector("#frmDocumentoCadastro")) return { tipo: tipo, tempos: tempos };
 
   console.warn("[GAOCG anexo] gravação não confirmada:", salvo.url, salvo.texto.slice(0, 500));
   const recusa = mensagemDeRecusaSei_(salvo.doc);
@@ -1704,7 +1710,7 @@ async function processarFilaAnexos_() {
       const arquivo = item.arquivo || await item.baixar();
       const baixado = performance.now();
       const enviado = await anexarArquivoNoSei_(arquivo, item.config);
-      console.info("[GAOCG anexo] " + item.nome + ": SEI " + Math.round(performance.now() - baixado) + " ms" + (item.arquivo ? "" : " (arquivo do app pronto em " + Math.round(baixado - inicio) + " ms)"));
+      console.info("[GAOCG anexo] " + item.nome + ": SEI " + Math.round(performance.now() - baixado) + " ms (" + enviado.tempos + ")" + (item.arquivo ? "" : " (arquivo do app pronto em " + Math.round(baixado - inicio) + " ms)"));
       resultadosAnexos_.push({ ok: true, nome: item.nome, tipo: enviado.tipo });
     } catch (e) {
       const erro = String(e && e.message ? e.message : e);
