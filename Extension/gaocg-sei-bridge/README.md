@@ -160,6 +160,8 @@ Detalhes:
 - v0.63.2: "Anexar documentos do processo" baixa todos os escolhidos do app numa chamada só
   (`baixarDocumentosProcesso`, lotes de até 25 MB) e só depois começa a subir no SEI: baixando
   durante o envio, cada documento levava 5-10 s no SEI em vez de ~1 s.
+- v0.63.3: o download do app vai em 3 chamadas simultâneas, de custo parecido (15 documentos
+  numa chamada só levaram 20 s, porque o app lê um arquivo por vez).
 
 ## Configuração por ambiente
 

@@ -2699,34 +2699,47 @@ function base64ParaBytes_(base64) {
  * vai em lotes (baixarDocumentosProcesso), quase sempre um só. Devolve Map id -> File | Error.
  */
 const LIMITE_LOTE_BASE_BYTES_ = 25 * 1024 * 1024;
+// Medido em 2026-11-23: 15 documentos numa chamada só levaram 20 s (o app lê um arquivo por vez).
+// Três chamadas ao mesmo tempo dividem esse tempo; o SEI ainda não está recebendo nada.
+const LOTES_SIMULTANEOS_BASE_ = 3;
 let baixandoDaBase_ = false;
 
-async function baixarDocumentosDaBase_(arquivos) {
-  const lotes = [];
-  let atual = [], soma = 0;
-  for (const a of arquivos) {
-    const tamanho = Number(a.tamanho) || 0;
-    if (atual.length && soma + tamanho > LIMITE_LOTE_BASE_BYTES_) { lotes.push(atual); atual = []; soma = 0; }
-    atual.push(a);
-    soma += tamanho;
-  }
-  if (atual.length) lotes.push(atual);
+/**
+ * Reparte os arquivos em lotes de custo parecido. O custo de cada arquivo no app é quase fixo
+ * (as chamadas ao Drive) mais um pouco pelo tamanho: 1 + MB.
+ */
+function lotesDeDownload_(arquivos) {
+  const total = arquivos.reduce((s, a) => s + (Number(a.tamanho) || 0), 0);
+  const quantos = Math.min(arquivos.length, Math.max(LOTES_SIMULTANEOS_BASE_, Math.ceil(total / LIMITE_LOTE_BASE_BYTES_)));
+  const lotes = Array.from({ length: quantos }, () => ({ arquivos: [], soma: 0, custo: 0 }));
+  const custo = a => 1 + (Number(a.tamanho) || 0) / 1048576;
+  arquivos.slice().sort((a, b) => custo(b) - custo(a)).forEach(a => {
+    const lote = lotes.reduce((menor, l) => (l.custo < menor.custo ? l : menor));
+    lote.arquivos.push(a);
+    lote.custo += custo(a);
+    lote.soma += Number(a.tamanho) || 0;
+  });
+  return lotes.map(l => l.arquivos).filter(l => l.length);
+}
 
+async function baixarLoteDaBase_(lote, resultado) {
+  let dados;
+  try {
+    dados = await pedirAoAppGaocg_("baixarDocumentosProcesso", { ids: lote.map(a => a.id) });
+  } catch (erro) {
+    lote.forEach(a => resultado.set(a.id, erro instanceof Error ? erro : new Error(String(erro))));
+    return;
+  }
+  for (const d of (dados && dados.arquivos) || []) {
+    resultado.set(d.id, d.erro ? new Error(d.erro) : new File([base64ParaBytes_(d.base64)], d.nome, { type: d.tipo || "application/pdf" }));
+  }
+}
+
+async function baixarDocumentosDaBase_(arquivos) {
   const resultado = new Map();
   baixandoDaBase_ = true;
   try {
-    for (const lote of lotes) {
-      let dados;
-      try {
-        dados = await pedirAoAppGaocg_("baixarDocumentosProcesso", { ids: lote.map(a => a.id) });
-      } catch (erro) {
-        lote.forEach(a => resultado.set(a.id, erro instanceof Error ? erro : new Error(String(erro))));
-        continue;
-      }
-      for (const d of (dados && dados.arquivos) || []) {
-        resultado.set(d.id, d.erro ? new Error(d.erro) : new File([base64ParaBytes_(d.base64)], d.nome, { type: d.tipo || "application/pdf" }));
-      }
-    }
+    await Promise.all(lotesDeDownload_(arquivos).map(lote => baixarLoteDaBase_(lote, resultado)));
   } finally {
     baixandoDaBase_ = false;
   }
