@@ -168,7 +168,7 @@ Detalhes:
 | Onde | O quê | Quando mexer |
 |---|---|---|
 | `manifest.json` → `host_permissions` / `content_scripts` | `https://sei.pe.gov.br/*`, `https://efisco.sefaz.pe.gov.br/*` | Se o SEI ou o E-fisco mudarem de domínio |
-| `manifest.json` → `externally_connectable` | `https://andersong2021.github.io/*` | Se o GAOCG mudar de domínio. **Só origem — o Chrome ignora caminho aqui**, então não dá para restringir a `/APP-GAOCG/` |
+| `manifest.json` → `externally_connectable` e `content_scripts` (content-app.js); `background.js` → `URLS_APP_GAOCG_` e `URL_APP_GAOCG_` | `https://andersong2021.github.io/*`, `https://dgmcg-ses-pe.github.io/*`, `https://gaocg.netlify.app/*` (Netlify desde v0.63.5: o firewall da SES bloqueia o github.io) | Se o GAOCG mudar de domínio. **Só origem — o Chrome ignora caminho aqui**, então não dá para restringir a `/APP-GAOCG/` |
 | `content-sei.js` → `MAPA_TIPO_DOCUMENTO` | `sof: "SOF"` | O texto tem que ser **idêntico** ao tipo de documento cadastrado no SEI da sua unidade |
 | `manifest.json` → `key` | Chave pública fixa (define o ID da extensão) | Só se precisar gerar uma chave nova - ver instalação acima |
 | `js/sei-bridge.js` → `ID_PADRAO_` | ID da extensão (derivado da `key` acima) | Só junto com uma troca de `key` (ou use o `localStorage` como atalho sem deploy) |

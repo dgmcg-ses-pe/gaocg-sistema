@@ -394,7 +394,7 @@ async function chamarAppGaocg_(acao, dados) {
  * do usuário: a lista de Recibos atualiza na hora quando a extensão anexa LE/OB). Quem
  * repassa para a página é content-app.js; aba sem ele (app em outra origem) só ignora.
  */
-const URLS_APP_GAOCG_ = ["https://andersong2021.github.io/APP-GAOCG/*", "https://dgmcg-ses-pe.github.io/gaocg-sistema/*"];
+const URLS_APP_GAOCG_ = ["https://andersong2021.github.io/APP-GAOCG/*", "https://dgmcg-ses-pe.github.io/gaocg-sistema/*", "https://gaocg.netlify.app/*"];
 
 async function avisarAppRecibosAlterados_(alteracoes) {
   try {
@@ -525,7 +525,8 @@ const CHAVE_EFISCO_OBS_ = "efiscoObs";              // { "2026OB095602": { linha
 const CHAVE_EFISCO_NES_VISTAS_ = "efiscoNesVistas"; // { "2026NE000418": epoch da 1ª consulta }
 const ALARME_EFISCO_ = "efisco-obs";
 const URL_EFISCO_ = "https://efisco.sefaz.pe.gov.br/";
-const URL_APP_GAOCG_ = "https://dgmcg-ses-pe.github.io/gaocg-sistema/";
+// Netlify desde 2026-11-23: o firewall da SES está bloqueando o github.io (v0.63.5).
+const URL_APP_GAOCG_ = "https://gaocg.netlify.app/";
 const GRUPOS_UNIDADE_EFISCO_ = { hospital: ["HOSPITAL"], upa: ["UPA"], upae_carreta: ["UPAE", "CARRETA"] };
 const CONFIG_EFISCO_PADRAO_ = { ativo: true, grupos: [], intervaloMin: 30 };
 const PAUSA_ENTRE_NES_MS_ = 300;
