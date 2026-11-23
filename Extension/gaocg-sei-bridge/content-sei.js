@@ -1704,7 +1704,7 @@ async function processarFilaAnexos_() {
       const arquivo = item.arquivo || await item.baixar();
       const baixado = performance.now();
       const enviado = await anexarArquivoNoSei_(arquivo, item.config);
-      console.info("[GAOCG anexo] " + item.nome + ": esperou o arquivo " + Math.round(baixado - inicio) + " ms, SEI " + Math.round(performance.now() - baixado) + " ms");
+      console.info("[GAOCG anexo] " + item.nome + ": SEI " + Math.round(performance.now() - baixado) + " ms" + (item.arquivo ? "" : " (arquivo do app pronto em " + Math.round(baixado - inicio) + " ms)"));
       resultadosAnexos_.push({ ok: true, nome: item.nome, tipo: enviado.tipo });
     } catch (e) {
       const erro = String(e && e.message ? e.message : e);
@@ -1752,6 +1752,17 @@ function caixaStatusAnexo_() {
 }
 
 let temporizadorStatusAnexo_ = null;
+
+function mostrarBaixandoDaBase_(total) {
+  clearTimeout(temporizadorStatusAnexo_);
+  const caixa = caixaStatusAnexo_();
+  caixa.hidden = false;
+  caixa.classList.remove("gaocg-status-fim");
+  caixa.querySelector(".gaocg-status-texto").textContent = "Baixando " + total + " documento(s) do app GAOCG…";
+  caixa.querySelector(".gaocg-barra-preenc").style.width = "0%";
+  caixa.querySelector(".gaocg-status-erros").hidden = true;
+  caixa.querySelector(".gaocg-status-tipos").hidden = true;
+}
 
 function mostrarProgressoAnexo_(atual, total, nome) {
   clearTimeout(temporizadorStatusAnexo_);
@@ -2682,29 +2693,45 @@ function base64ParaBytes_(base64) {
 }
 
 /**
- * Deixa no máximo `maximo` tarefas rodando ao mesmo tempo (2026-11-23). Os documentos da base
- * são baixados do app enquanto o anterior ainda sobe no SEI: o download pelo app é a parte
- * lenta, e a fila do SEI continua um por vez, na ordem escolhida.
+ * Baixa do app, antes de subir qualquer um no SEI, os documentos escolhidos (2026-11-23).
+ * Medido no SEI real: baixando do app enquanto o SEI recebia os anteriores, cada envio ao SEI
+ * levava 5-10 s em vez de ~1 s; e cada chamada ao app custa uns 4 s de ida e volta. Por isso
+ * vai em lotes (baixarDocumentosProcesso), quase sempre um só. Devolve Map id -> File | Error.
  */
-function limitadorDeTarefas_(maximo) {
-  let ativas = 0;
-  const esperando = [];
-  const liberar = () => {
-    ativas--;
-    if (esperando.length) esperando.shift()();
-  };
-  return tarefa => new Promise((resolver, rejeitar) => {
-    const rodar = () => {
-      ativas++;
-      Promise.resolve().then(tarefa).then(resolver, rejeitar).finally(liberar);
-    };
-    if (ativas < maximo) rodar(); else esperando.push(rodar);
-  });
-}
+const LIMITE_LOTE_BASE_BYTES_ = 25 * 1024 * 1024;
+let baixandoDaBase_ = false;
 
-async function baixarDocumentoDaBase_(id) {
-  const dados = await pedirAoAppGaocg_("baixarDocumentoProcesso", { id: id });
-  return new File([base64ParaBytes_(dados.base64)], dados.nome, { type: dados.tipo || "application/pdf" });
+async function baixarDocumentosDaBase_(arquivos) {
+  const lotes = [];
+  let atual = [], soma = 0;
+  for (const a of arquivos) {
+    const tamanho = Number(a.tamanho) || 0;
+    if (atual.length && soma + tamanho > LIMITE_LOTE_BASE_BYTES_) { lotes.push(atual); atual = []; soma = 0; }
+    atual.push(a);
+    soma += tamanho;
+  }
+  if (atual.length) lotes.push(atual);
+
+  const resultado = new Map();
+  baixandoDaBase_ = true;
+  try {
+    for (const lote of lotes) {
+      let dados;
+      try {
+        dados = await pedirAoAppGaocg_("baixarDocumentosProcesso", { ids: lote.map(a => a.id) });
+      } catch (erro) {
+        lote.forEach(a => resultado.set(a.id, erro instanceof Error ? erro : new Error(String(erro))));
+        continue;
+      }
+      for (const d of (dados && dados.arquivos) || []) {
+        resultado.set(d.id, d.erro ? new Error(d.erro) : new File([base64ParaBytes_(d.base64)], d.nome, { type: d.tipo || "application/pdf" }));
+      }
+    }
+  } finally {
+    baixandoDaBase_ = false;
+  }
+  arquivos.forEach(a => { if (!resultado.has(a.id)) resultado.set(a.id, new Error("O app não devolveu este arquivo.")); });
+  return resultado;
 }
 
 function dataCurta_(iso) {
@@ -2922,16 +2949,18 @@ function montarConferencia_(painel, dados, selSerie) {
     contar();
   }));
   contar();
-  confirmar.addEventListener("click", () => {
+  confirmar.addEventListener("click", async () => {
     const escolhidas = ordem.slice();
     fecharConferencia_();
-    const limitar = limitadorDeTarefas_(2);
+    mostrarBaixandoDaBase_(escolhidas.length);
+    const inicio = performance.now();
+    const baixados = await baixarDocumentosDaBase_(escolhidas.map(l => l.arquivo));
+    console.info("[GAOCG anexo] " + escolhidas.length + " documento(s) baixado(s) do app em " + Math.round(performance.now() - inicio) + " ms");
     for (const linha of escolhidas) {
-      const download = limitar(() => baixarDocumentoDaBase_(linha.arquivo.id));
-      download.catch(() => {}); // o erro aparece quando a fila chegar neste documento
+      const baixado = baixados.get(linha.arquivo.id);
       filaAnexos_.push({
         nome: linha.arquivo.nome,
-        baixar: () => download,
+        baixar: async () => { if (baixado instanceof Error) throw baixado; return baixado; },
         config: Object.assign({}, config, { tipoValor: linha.seletor.value, nomeArvore: linha.nomeArvore })
       });
     }
@@ -3399,7 +3428,7 @@ function textoProgressoHtml_(item) {
  */
 /** Enquanto documentos sobem para o SEI, as conferências em segundo plano esperam a vez. */
 async function esperarFilaDeAnexos_() {
-  while (anexoEmAndamento_) await esperar_(500);
+  while (anexoEmAndamento_ || baixandoDaBase_) await esperar_(500);
 }
 
 async function processarItemReciboSei_(item, arvore, extras, vigente) {
