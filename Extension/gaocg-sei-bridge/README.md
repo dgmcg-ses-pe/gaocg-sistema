@@ -145,6 +145,17 @@ Detalhes:
   `obs-efisco.js` (página das OBs) e o trecho "OBs do E-fisco" no fim de `background.js`.
   No backend: `ObEfisco.gs` (`listarNesMaeEfisco`, `anexarObEfiscoRecibo`, aba `ObsEfisco`).
 
+## Cartões do processo e documentos da base (v0.63.0)
+
+- "Acompanhamento · Anexar documentos" só cuida de anexar documentos da pasta ANEXOS; o
+  "Recibo no app" (criar recibo ou informar o processo) virou um cartão próprio, que some
+  quando o acompanhamento não é de recibo. Cada um minimiza separado.
+- Na lista de documentos, a ordem em que se marca é a ordem na árvore do SEI (posição ao lado);
+  "Marcar/desmarcar todos" acrescenta os que faltam na ordem da lista.
+- Os documentos são baixados do app dois de cada vez enquanto o anterior sobe no SEI, e o app
+  não percorre mais as pastas do Drive para um arquivo que acabou de listar. O console do SEI
+  mostra o tempo de cada um ("[GAOCG anexo] ... esperou o arquivo X ms, SEI Y ms").
+
 ## Configuração por ambiente
 
 | Onde | O quê | Quando mexer |

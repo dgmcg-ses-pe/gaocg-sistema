@@ -1700,8 +1700,11 @@ async function processarFilaAnexos_() {
     const atual = resultadosAnexos_.length + 1;
     mostrarProgressoAnexo_(atual, atual + filaAnexos_.length, item.nome);
     try {
+      const inicio = performance.now();
       const arquivo = item.arquivo || await item.baixar();
+      const baixado = performance.now();
       const enviado = await anexarArquivoNoSei_(arquivo, item.config);
+      console.info("[GAOCG anexo] " + item.nome + ": esperou o arquivo " + Math.round(baixado - inicio) + " ms, SEI " + Math.round(performance.now() - baixado) + " ms");
       resultadosAnexos_.push({ ok: true, nome: item.nome, tipo: enviado.tipo });
     } catch (e) {
       const erro = String(e && e.message ? e.message : e);
@@ -2438,7 +2441,12 @@ function garantirCartaoAnotacao_() {
 const ID_CARTAO_ACOMPANHAMENTO_ = "gaocgCartaoAcompanhamento";
 const CHAVE_ACOMPANHAMENTO_MINIMIZADO_ = "gaocgAcompanhamentoMinimizado";
 
-const estadoAcompanhamento_ = { raiz: null, link: null, doc: null, lendo: false };
+const estadoAcompanhamento_ = { raiz: null, raizRecibo: null, link: null, doc: null, lendo: false };
+
+// "Recibo no app" em cartão próprio (pedido do usuário, 2026-11-23): o cartão do acompanhamento
+// fica só com a anexação de documentos, para ficar claro onde se está mexendo.
+const ID_CARTAO_RECIBO_APP_ = "gaocgCartaoReciboApp";
+const CHAVE_RECIBO_APP_MINIMIZADO_ = "gaocgReciboAppMinimizado";
 
 function linkAcompanhamentoDaArvore_(docArvore) {
   for (const script of Array.from(docArvore.querySelectorAll("script:not([src])"))) {
@@ -2566,6 +2574,8 @@ const ESTILO_CARTAO_ACOMPANHAMENTO_ = `
   .recibo-app .ok { font-size: 12.5px; font-weight: 600; color: #1d6b3a; overflow-wrap: anywhere; }
   .recibo-app .acoes .anexar { margin: 0; }
   .recibo-app .parcelas { margin-top: 7px; margin-bottom: 0; }
+  .cartao-recibo .recibo-app { margin-top: 4px; padding-top: 0; border-top: 0; }
+  .nome.todos { font-weight: 600; padding: 4px 0 6px; border-bottom: 1px solid #d7e4ef; margin-bottom: 0; }
 `;
 
 function pintarCartaoAcompanhamento_(registros, erro) {
@@ -2573,6 +2583,10 @@ function pintarCartaoAcompanhamento_(registros, erro) {
   if (!raiz) return;
   const corpo = raiz.querySelector(".corpo");
   corpo.textContent = "";
+  const raizRecibo = estadoAcompanhamento_.raizRecibo;
+  const corpoRecibo = raizRecibo && raizRecibo.querySelector(".corpo");
+  if (corpoRecibo) corpoRecibo.textContent = "";
+  ajustarCartaoReciboApp_();
 
   const aviso = (texto, ehErro) => {
     const el = document.createElement("div");
@@ -2623,10 +2637,18 @@ function pintarCartaoAcompanhamento_(registros, erro) {
       botao.textContent = "Anexar documentos do processo";
       botao.addEventListener("click", () => abrirConferenciaDocumentos_(registro, {}));
       bloco.appendChild(botao);
-      const areaRecibo = document.createElement("div");
-      areaRecibo.className = "recibo-app";
-      bloco.appendChild(areaRecibo);
-      preverReciboDoAcompanhamento_(areaRecibo, registro, {});
+      if (corpoRecibo) {
+        // Fica escondido até o app dizer que este acompanhamento é de recibo.
+        const blocoRecibo = document.createElement("div");
+        blocoRecibo.className = "registro";
+        blocoRecibo.hidden = true;
+        blocoRecibo.appendChild(elementoConferencia_("div", "grupo", registro.observacao || registro.grupo || "Sem grupo"));
+        const areaRecibo = document.createElement("div");
+        areaRecibo.className = "recibo-app";
+        blocoRecibo.appendChild(areaRecibo);
+        corpoRecibo.appendChild(blocoRecibo);
+        preverReciboDoAcompanhamento_(areaRecibo, registro, {});
+      }
     }
     corpo.appendChild(bloco);
   }
@@ -2657,6 +2679,27 @@ function base64ParaBytes_(base64) {
   const bytes = new Uint8Array(binario.length);
   for (let i = 0; i < binario.length; i++) bytes[i] = binario.charCodeAt(i);
   return bytes;
+}
+
+/**
+ * Deixa no máximo `maximo` tarefas rodando ao mesmo tempo (2026-11-23). Os documentos da base
+ * são baixados do app enquanto o anterior ainda sobe no SEI: o download pelo app é a parte
+ * lenta, e a fila do SEI continua um por vez, na ordem escolhida.
+ */
+function limitadorDeTarefas_(maximo) {
+  let ativas = 0;
+  const esperando = [];
+  const liberar = () => {
+    ativas--;
+    if (esperando.length) esperando.shift()();
+  };
+  return tarefa => new Promise((resolver, rejeitar) => {
+    const rodar = () => {
+      ativas++;
+      Promise.resolve().then(tarefa).then(resolver, rejeitar).finally(liberar);
+    };
+    if (ativas < maximo) rodar(); else esperando.push(rodar);
+  });
 }
 
 async function baixarDocumentoDaBase_(id) {
@@ -2802,6 +2845,11 @@ function montarConferencia_(painel, dados, selSerie) {
   const padrao = opcaoDoTipo_(selSerie, config.tipoDocumento);
 
   painel.appendChild(elementoConferencia_("div", "caminho", dados.caminho));
+  const todos = document.createElement("input");
+  todos.type = "checkbox";
+  const rotuloTodos = elementoConferencia_("label", "nome todos");
+  rotuloTodos.append(todos, elementoConferencia_("span", "", "Marcar/desmarcar todos (na ordem da lista)"));
+  painel.appendChild(rotuloTodos);
   const lista = elementoConferencia_("ul", "arquivos");
   const linhas = [];
 
@@ -2848,11 +2896,25 @@ function montarConferencia_(painel, dados, selSerie) {
   const confirmar = elementoConferencia_("button", "anexar");
   confirmar.type = "button";
   const ordem = [];
+  const marcaveis = linhas.filter(l => !l.marcar.disabled);
   const contar = () => {
     linhas.forEach(l => { const i = ordem.indexOf(l); l.posicao.textContent = i === -1 ? "" : (i + 1) + "º"; });
     confirmar.textContent = ordem.length ? "Anexar " + ordem.length + " documento(s) nesta ordem" : "Marque os documentos na ordem da árvore";
     confirmar.disabled = !ordem.length;
+    todos.checked = !!ordem.length && ordem.length === marcaveis.length;
+    todos.indeterminate = !!ordem.length && ordem.length < marcaveis.length;
   };
+  todos.disabled = !marcaveis.length;
+  // Marcar todos acrescenta os que faltam na ordem da lista, depois dos já marcados.
+  todos.addEventListener("change", () => {
+    if (todos.checked) {
+      marcaveis.filter(l => !l.marcar.checked).forEach(l => { l.marcar.checked = true; ordem.push(l); });
+    } else {
+      marcaveis.forEach(l => { l.marcar.checked = false; });
+      ordem.length = 0;
+    }
+    contar();
+  });
   linhas.forEach(l => l.marcar.addEventListener("change", () => {
     const i = ordem.indexOf(l);
     if (l.marcar.checked && i === -1) ordem.push(l);
@@ -2863,10 +2925,13 @@ function montarConferencia_(painel, dados, selSerie) {
   confirmar.addEventListener("click", () => {
     const escolhidas = ordem.slice();
     fecharConferencia_();
+    const limitar = limitadorDeTarefas_(2);
     for (const linha of escolhidas) {
+      const download = limitar(() => baixarDocumentoDaBase_(linha.arquivo.id));
+      download.catch(() => {}); // o erro aparece quando a fila chegar neste documento
       filaAnexos_.push({
         nome: linha.arquivo.nome,
-        baixar: () => baixarDocumentoDaBase_(linha.arquivo.id),
+        baixar: () => download,
         config: Object.assign({}, config, { tipoValor: linha.seletor.value, nomeArvore: linha.nomeArvore })
       });
     }
@@ -2906,9 +2971,58 @@ function listaDeRecibos_(recibos) {
 }
 
 function inicioAreaRecibo_(area) {
-  area.hidden = false;
+  mostrarAreaRecibo_(area, true);
   area.textContent = "";
-  area.appendChild(elementoConferencia_("div", "rotulo", "Recibo no app"));
+}
+
+/** A área e o bloco do acompanhamento aparecem juntos; o cartão some quando não sobra nenhum. */
+function mostrarAreaRecibo_(area, visivel) {
+  area.hidden = !visivel;
+  if (area.parentElement) area.parentElement.hidden = !visivel;
+  ajustarCartaoReciboApp_();
+}
+
+function ajustarCartaoReciboApp_() {
+  const raiz = estadoAcompanhamento_.raizRecibo;
+  if (!raiz || !raiz.host) return;
+  const temConteudo = !!raiz.querySelector(".corpo > .registro:not([hidden])");
+  raiz.host.style.display = acompanhamentoSeiAtivo_ && temConteudo ? "" : "none";
+}
+
+function montarCartaoReciboApp_(doc, depoisDe) {
+  const hospedeiro = doc.createElement("div");
+  hospedeiro.id = ID_CARTAO_RECIBO_APP_;
+  hospedeiro.style.display = "none";
+  const raiz = hospedeiro.attachShadow({ mode: "open" });
+  raiz.innerHTML = `
+    <style>${ESTILO_CARTAO_ACOMPANHAMENTO_}</style>
+    <section class="cartao cartao-recibo" aria-label="Recibo no app">
+      <header class="cabecalho">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h12v20l-3-2-3 2-3-2-3 2z"/><path d="M9 7h6M9 11h6M9 15h4"/></svg>
+        <span class="titulo">Recibo no app</span>
+        <button type="button" class="icone seta" title="Minimizar" aria-label="Minimizar">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>
+        </button>
+      </header>
+      <div class="corpo" role="status"></div>
+    </section>
+  `;
+  const cartao = raiz.querySelector(".cartao");
+  const seta = raiz.querySelector(".seta");
+  const aplicarMinimizado = minimizado => {
+    cartao.classList.toggle("minimizado", minimizado);
+    const rotulo = minimizado ? "Expandir" : "Minimizar";
+    seta.title = rotulo;
+    seta.setAttribute("aria-label", rotulo);
+  };
+  aplicarMinimizado(cartaoMinimizado_(CHAVE_RECIBO_APP_MINIMIZADO_));
+  seta.addEventListener("click", () => {
+    const minimizado = !cartao.classList.contains("minimizado");
+    aplicarMinimizado(minimizado);
+    guardarCartaoMinimizado_(CHAVE_RECIBO_APP_MINIMIZADO_, minimizado);
+  });
+  depoisDe.parentNode.insertBefore(hospedeiro, depoisDe.nextSibling);
+  return raiz;
 }
 
 async function preverReciboDoAcompanhamento_(area, registro, escolha) {
@@ -2932,7 +3046,7 @@ async function preverReciboDoAcompanhamento_(area, registro, escolha) {
 }
 
 function pintarReciboDoAcompanhamento_(area, registro, escolha, p) {
-  if (!p || p.situacao === "nao_recibo") { area.textContent = ""; area.hidden = true; return; }
+  if (!p || p.situacao === "nao_recibo") { area.textContent = ""; mostrarAreaRecibo_(area, false); return; }
   inicioAreaRecibo_(area);
   if (p.situacao === "ja_existe") {
     area.appendChild(elementoConferencia_("div", "ok", "Já cadastrado: " + listaDeRecibos_(p.recibos)));
@@ -3056,10 +3170,10 @@ function montarCartaoAcompanhamento_(doc, link) {
   const raiz = hospedeiro.attachShadow({ mode: "open" });
   raiz.innerHTML = `
     <style>${ESTILO_CARTAO_ACOMPANHAMENTO_}</style>
-    <section class="cartao" aria-label="Acompanhamento Especial">
+    <section class="cartao" aria-label="Acompanhamento Especial · Anexar documentos">
       <header class="cabecalho">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
-        <span class="titulo">Acompanhamento Especial</span>
+        <span class="titulo">Acompanhamento · Anexar documentos</span>
         <button type="button" class="icone seta" title="Minimizar" aria-label="Minimizar">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>
         </button>
@@ -3088,6 +3202,7 @@ function montarCartaoAcompanhamento_(doc, link) {
   else doc.body.appendChild(hospedeiro);
 
   estadoAcompanhamento_.raiz = raiz;
+  estadoAcompanhamento_.raizRecibo = hospedeiro.parentNode ? montarCartaoReciboApp_(doc, hospedeiro) : null;
   estadoAcompanhamento_.link = link;
   estadoAcompanhamento_.doc = doc;
   carregarCartaoAcompanhamento_();
@@ -3102,6 +3217,7 @@ function garantirCartaoAcompanhamento_() {
   const existente = doc.getElementById(ID_CARTAO_ACOMPANHAMENTO_);
   if (existente) {
     existente.style.display = acompanhamentoSeiAtivo_ ? "" : "none";
+    ajustarCartaoReciboApp_();
     return;
   }
   if (!acompanhamentoSeiAtivo_) return;
@@ -3503,7 +3619,7 @@ function montarCartaoReciboSei_(doc, arvore) {
     guardarCartaoMinimizado_(CHAVE_RECIBO_SEI_MINIMIZADO_, minimizado);
   });
 
-  const referencia = doc.getElementById(ID_CARTAO_ACOMPANHAMENTO_) || doc.getElementById(ID_CARTAO_ANOTACAO_) || pontoDosCartoes_(doc);
+  const referencia = doc.getElementById(ID_CARTAO_RECIBO_APP_) || doc.getElementById(ID_CARTAO_ACOMPANHAMENTO_) || doc.getElementById(ID_CARTAO_ANOTACAO_) || pontoDosCartoes_(doc);
   if (referencia && referencia.parentNode) referencia.parentNode.insertBefore(hospedeiro, referencia.nextSibling);
   else doc.body.appendChild(hospedeiro);
 
