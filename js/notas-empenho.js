@@ -289,13 +289,6 @@ const TelaNotasEmpenho = (function () {
     document.getElementById('neTamanhoPagina').addEventListener('change', function () { mudarTamanhoPagina_(this.value); });
   }
 
-  function seloSituacao_(situacao) {
-    if (situacao === 'Pago') return 'verde';
-    if (situacao === 'Liquidado') return 'azul';
-    if (situacao === 'Em processamento') return 'amarelo';
-    return 'cinza';
-  }
-
   /**
    * "Cronograma solicitado" (sessão 2026-07-29, pedido do usuário): meses
    * SOLICITADOS pela SOF (fonte+objeto casada com esta NE), verde quando o
@@ -332,52 +325,13 @@ const TelaNotasEmpenho = (function () {
       </div>`;
   }
 
-  const MESES_ABREV_ = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
-
-  /**
-   * "mmm.aa" a partir do mês do cronograma e do ano da NE - espelha
-   * competenciaDoMes_ (backend/NotasEmpenho.gs), que é quem decide o filtro.
-   * Se as duas divergirem, o mês filtrado deixa de ser destacado.
-   */
-  function competenciaDoMesNe_(mes, ano) {
-    return MESES_ABREV_[mes - 1] + '.' + String(ano).slice(-2);
-  }
-
   function cronogramaBoxHtml_(g) {
-    const cronograma = g.cronograma || [];
-    const total = cronograma.reduce((s, c) => s + Number(c.valor || 0), 0);
-    const confereTotal = Math.abs(total - Number(g.valor_bruto || 0)) < 0.01;
-    // Com filtro de Competência ativo, o cronograma já abre expandido e o(s)
-    // mês(es) filtrado(s) ficam destacados - o pedido do usuário foi justamente
-    // "ao filtrar, mostrar como está a situação da NE naquele mês". Sem isso o
-    // analista teria de abrir card por card para ver o que filtrou.
+    // Com filtro de Competência ativo, o cronograma já abre expandido. O quadro "Cronograma de desembolso
+    // (documento)" saiu dos cards a pedido do usuário (2026-11-24): fica só o cronograma solicitado da SOF.
     const filtrando = competenciasFiltradas_.length > 0;
-    const ehFiltrado = c => filtrando && competenciasFiltradas_.indexOf(competenciaDoMesNe_(c.mes, g.ano)) !== -1;
     return `
       <div class="cartao-ne-cronograma-caixa ${filtrando ? '' : 'oculto'}">
         ${cronogramaSolicitadoBoxHtml_(g)}
-        ${cronograma.length ? `
-        <div class="cartao-ne-cronograma-cabecalho">
-          <div>
-            <strong>CRONOGRAMA DE DESEMBOLSO (documento)</strong>
-            <div class="ajuda">Pagamentos mensais · ${g.ano || ''}</div>
-          </div>
-          <span class="cartao-ne-cronograma-badge">${cronograma.length} meses</span>
-        </div>
-        <table class="tabela">
-          <thead><tr><th>Mês</th><th>Valor previsto</th><th>Situação</th></tr></thead>
-          <tbody>${cronograma.map(c => `
-            <tr class="${ehFiltrado(c) ? 'linha-mes-filtrado' : ''}">
-              <td>${UI.escaparHtml(NOMES_MESES[c.mes - 1] || c.mes)}${c.reforco ? ' <span class="selo azul">+ reforço</span>' : ''}${ehFiltrado(c) ? ' <span class="selo azul">filtrado</span>' : ''}</td>
-              <td>${UI.formatarMoeda(c.valor)}</td>
-              <td><span class="selo ${seloSituacao_(c.situacao)}">${UI.escaparHtml(c.situacao)}</span></td>
-            </tr>`).join('') || '<tr><td colspan="3" class="estado-vazio">Sem cronograma lido para esta NE.</td></tr>'}</tbody>
-          <tfoot><tr>
-            <td><strong>Total do cronograma</strong></td>
-            <td><strong>${UI.formatarMoeda(total)}</strong></td>
-            <td class="ajuda">${confereTotal ? 'Conforme valor bruto' : 'Diverge do valor bruto'}</td>
-          </tr></tfoot>
-        </table>` : ''}
       </div>`;
   }
 
