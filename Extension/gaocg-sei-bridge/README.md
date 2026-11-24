@@ -177,6 +177,9 @@ do processo são tentadas de novo e entram na SOF.
 - O objeto de cada fonte é sugerido pelo texto (Rateio, Piso, Sazonalidade) ou "CONTRATO DE GESTÃO (TES/SUS)".
 - No PDF do SEI a última coluna do cronograma pode vir cortada: o mês que falta é a diferença para o total
   citado no texto, com aviso.
+- v0.67.1: na SES-GAOCG o cartão também lê as pastas recolhidas da árvore (o SEI só traz um nó "Aguarde" e
+  carrega o conteúdo depois, pelo frmArvore enviado ao `Pastas[n]['link']`). Delas entram só SOF e NE; LE/OB
+  continuam só das pastas abertas.
 - Backend: `sof-sei-leitura.ts` (leitura, testável com `node teste/sof-sei.mjs <arquivo>`) e `sof-sei.ts`.
 
 ## Configuração por ambiente

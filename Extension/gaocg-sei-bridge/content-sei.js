@@ -3723,6 +3723,11 @@ function documentosDaArvoreSei_(doc) {
   const texto = textoDosScriptsDaArvore_(doc);
   const processo = /new infraArvoreNo\("PROCESSO","(\d+)",[^,]*,"[^"]*",(?:"[^"]*"|null),"([^"]*)"/.exec(texto);
   if (!processo) return null;
+  return { idProcesso: processo[1], numeroProcesso: processo[2], documentos: documentosDoScriptSei_(texto, doc) };
+}
+
+/** Documentos (PDF ou HTML) declarados num script da árvore: `Nos[i] = new infraArvoreNo("DOCUMENTO", ...)`. */
+function documentosDoScriptSei_(texto, doc) {
   const fontes = {};
   const reSrc = /Nos\[(\d+)\]\.src\s*=\s*'([^']*)'/g;
   let s;
@@ -3731,13 +3736,51 @@ function documentosDaArvoreSei_(doc) {
   const reNo = /Nos\[(\d+)\]\s*=\s*new infraArvoreNo\("DOCUMENTO","(\d+)","[^"]*",(?:"[^"]*"|null),(?:"[^"]*"|null),"([^"]*)"/g;
   let m;
   while ((m = reNo.exec(texto))) {
-    const src = fontes[m[1]] || "";
+    const src = (fontes[m[1]] || "").replace(/&amp;/g, "&");
     // PDF (documento externo) ou HTML (documento interno, usado só para a SOF - 2026-11-24).
     const conteudo = /acao=documento_download_anexo/.test(src) ? "pdf" : /acao=documento_visualizar/.test(src) ? "html" : "";
     if (!conteudo) continue;
     documentos.push({ id: m[2], nome: m[3], conteudo: conteudo, url: new URL(src, doc.baseURI || doc.location.href).href });
   }
-  return { idProcesso: processo[1], numeroProcesso: processo[2], documentos: documentos };
+  return documentos;
+}
+
+/*
+ * Pastas da árvore (confirmado no SEI real em 2026-11-24): o script da árvore só traz um nó "Aguarde"
+ * em cada pasta; o conteúdo chega depois, pelo formulário frmArvore enviado ao Pastas[n]['link'] com
+ * hdnPastaAtual = "PASTAn" e hdnProtocolos = Pastas[n]['protocolos'] (arvore_montar.js do SEI). A
+ * resposta tem os mesmos `Nos[i] = new infraArvoreNo(...)`. É o que o SEI faz ao abrir a pasta: só lê.
+ * Lido uma vez por carga da árvore (cache por documento do iframe).
+ */
+const pastasDaArvoreLidas_ = new WeakMap();
+
+async function documentosDasPastasSei_(doc) {
+  if (pastasDaArvoreLidas_.has(doc)) return pastasDaArvoreLidas_.get(doc);
+  const texto = textoDosScriptsDaArvore_(doc);
+  const form = doc.getElementById("frmArvore");
+  const documentos = [];
+  const rePasta = /Pastas\[(\d+)\]\['link'\]\s*=\s*'([^']*)'/g;
+  let m;
+  while (form && (m = rePasta.exec(texto))) {
+    const n = m[1];
+    const protocolos = (new RegExp("Pastas\\[" + n + "\\]\\['protocolos'\\]\\s*=\\s*'([^']*)'").exec(texto) || [])[1] || "";
+    const corpo = new URLSearchParams();
+    Array.from(form.elements).forEach(e => { if (e.name) corpo.set(e.name, e.value); });
+    corpo.set("hdnPastaAtual", "PASTA" + n);
+    corpo.set("hdnProtocolos", protocolos);
+    try {
+      const resposta = await fetch(new URL(m[2].replace(/&amp;/g, "&"), doc.baseURI).href, {
+        method: "POST", credentials: "same-origin", cache: "no-store",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: corpo.toString()
+      });
+      if (!resposta.ok) continue;
+      const charset = (/charset=([\w-]+)/i.exec(resposta.headers.get("content-type") || "") || [])[1] || "iso-8859-1";
+      const html = new TextDecoder(charset).decode(await resposta.arrayBuffer());
+      documentos.push(...documentosDoScriptSei_(html, doc));
+    } catch (e) { /* pasta que não abriu: segue com as outras */ }
+  }
+  pastasDaArvoreLidas_.set(doc, documentos);
+  return documentos;
 }
 
 function nomeCurtoDocumentoSei_(nome) {
@@ -4470,11 +4513,25 @@ function garantirCartaoReciboSei_() {
   const arvore = documentosDaArvoreSei_(doc);
   if (!arvore) return;
   const unidadeNe = siglaUnidadeSei_() === SIGLA_UNIDADE_NE_;
-  arvore.documentos = arvore.documentos
-    .map(d => Object.assign(d, { fluxo: fluxoDoDocumentoSei_(d.nome, unidadeNe, d.conteudo) }))
-    .filter(d => d.fluxo);
-  if (arvore.documentos.length) montarCartaoReciboSei_(doc, arvore);
+  const montar = () => {
+    if (doc.getElementById(ID_CARTAO_RECIBO_SEI_)) return;
+    arvore.documentos = arvore.documentos
+      .map(d => Object.assign(d, { fluxo: fluxoDoDocumentoSei_(d.nome, unidadeNe, d.conteudo) }))
+      // Das pastas recolhidas só entram SOF e NE: LE/OB continuam só das pastas abertas.
+      .filter(d => d.fluxo && !(d.daPasta && d.fluxo === "recibo"));
+    if (arvore.documentos.length) montarCartaoReciboSei_(doc, arvore);
+  };
+  // Na SES-GAOCG, SOF e NEs mãe costumam estar em pastas que o SEI só carrega depois (2026-11-24).
+  if (!unidadeNe || !/Pastas\[\d+\]\['link'\]/.test(textoDosScriptsDaArvore_(doc))) { montar(); return; }
+  if (leituraPastasEmAndamento_ === doc) return;
+  leituraPastasEmAndamento_ = doc;
+  documentosDasPastasSei_(doc).then(extras => {
+    const ids = new Set(arvore.documentos.map(d => d.id));
+    extras.forEach(d => { if (!ids.has(d.id)) { ids.add(d.id); arvore.documentos.push(Object.assign({}, d, { daPasta: true })); } });
+    montar();
+  }).finally(() => { if (leituraPastasEmAndamento_ === doc) leituraPastasEmAndamento_ = null; });
 }
+let leituraPastasEmAndamento_ = null;
 
 /* ============ liga/desliga das janelas de anexo e anotação (popup) ============
  *
