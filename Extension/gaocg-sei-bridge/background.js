@@ -348,7 +348,11 @@ const CHAVE_SESSAO_GAOCG_ = "sessaoGaocg";
 // Acompanhamento Especial (AcompanhamentoSei.gs). A segunda grava, mas é idempotente por processo do SEI.
 // listarNesMaeEfisco/anexarObEfiscoRecibo (2026-11-19): OBs do E-fisco das NEs mãe do app (ObEfisco.gs). Só o
 // background chama (verificação periódica e página obs-efisco.html); a segunda grava, idempotente pelo número da OB.
-const ACOES_DOCUMENTOS_GAOCG_ = ["listarDocumentosProcesso", "baixarDocumentoProcesso", "baixarDocumentosProcesso", "documentosSeiProcessados", "anexarDocumentoSeiRecibo", "documentosSeiNeProcessados", "anexarNeSeiSof", "preverReciboAcompanhamentoSei", "criarReciboAcompanhamentoSei", "listarNesMaeEfisco", "anexarObEfiscoRecibo"];
+const ACOES_DOCUMENTOS_GAOCG_ = ["listarDocumentosProcesso", "baixarDocumentoProcesso", "baixarDocumentosProcesso", "documentosSeiProcessados", "anexarDocumentoSeiRecibo", "documentosSeiNeProcessados", "anexarNeSeiSof", "preverReciboAcompanhamentoSei", "criarReciboAcompanhamentoSei", "listarNesMaeEfisco", "anexarObEfiscoRecibo",
+  "enviarDocumentoBase", "excluirDocumentoBase", "substituirDocumentoBase", "criarPastaBase", "salvarOrdemDocumentos"];
+// Gerenciar a base de documentos pelo card (2026-11-24). Estas gravam e NÃO são idempotentes: sem repetição
+// automática, para um envio que demorou não virar dois arquivos no Drive.
+const ACOES_SEM_REPETIR_GAOCG_ = ["enviarDocumentoBase", "excluirDocumentoBase", "substituirDocumentoBase", "criarPastaBase"];
 const ESPERAS_API_GAOCG_MS_ = [800, 2500];
 
 async function guardarSessaoGaocg_(token) {
@@ -357,7 +361,7 @@ async function guardarSessaoGaocg_(token) {
 }
 
 /** Repetir é seguro (leituras, e a única escrita é idempotente): a primeira chamada costuma pegar o script frio. */
-async function postarNoAppGaocg_(corpo) {
+async function postarNoAppGaocg_(corpo, semRepetir) {
   for (let tentativa = 0; ; tentativa++) {
     try {
       const resposta = await fetch(URL_API_GAOCG_, {
@@ -368,7 +372,7 @@ async function postarNoAppGaocg_(corpo) {
       if (!resposta.ok) throw new Error("O app GAOCG respondeu com erro (HTTP " + resposta.status + ").");
       return await resposta.json();
     } catch (erro) {
-      if (tentativa >= ESPERAS_API_GAOCG_MS_.length) throw erro;
+      if (semRepetir || tentativa >= ESPERAS_API_GAOCG_MS_.length) throw erro;
       await new Promise(r => setTimeout(r, ESPERAS_API_GAOCG_MS_[tentativa]));
     }
   }
@@ -380,7 +384,7 @@ async function chamarAppGaocg_(acao, dados) {
   const token = guardado[CHAVE_SESSAO_GAOCG_];
   const semSessao = "Entre no app GAOCG neste navegador e tente de novo.";
   if (!token) return { ok: false, erro: semSessao };
-  const json = await postarNoAppGaocg_(Object.assign({}, dados, { action: acao, token: token }));
+  const json = await postarNoAppGaocg_(Object.assign({}, dados, { action: acao, token: token }), ACOES_SEM_REPETIR_GAOCG_.includes(acao));
   if (json.ok) return { ok: true, dados: json.data };
   if (json.error && json.error.toLowerCase().indexOf("sessão") !== -1) {
     await guardarSessaoGaocg_(null);

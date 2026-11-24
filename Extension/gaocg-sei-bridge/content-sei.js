@@ -2593,6 +2593,31 @@ const ESTILO_CARTAO_ACOMPANHAMENTO_ = `
   .recibo-app .parcelas { margin-top: 7px; margin-bottom: 0; }
   .cartao-recibo .recibo-app { margin-top: 4px; padding-top: 0; border-top: 0; }
   .nome.todos { font-weight: 600; padding: 4px 0 6px; border-bottom: 1px solid #d7e4ef; margin-bottom: 0; }
+  .nome.todos { padding-left: 22px; }
+  .ferramentas { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 6px; }
+  .secundario.pequeno { padding: 3px 8px; font-size: 11.5px; }
+  .secundario:disabled, .icone-texto:disabled { opacity: .45; cursor: default; }
+  .secundario.perigo { background: #f8dcd6; color: #8a1d08; }
+  .status { font-size: 11.5px; font-weight: 600; color: #1d6b3a; margin: 2px 0 6px; overflow-wrap: anywhere; }
+  .status:empty { display: none; }
+  .status.erro { color: #a3220a; }
+  .arquivos .linha { display: flex; gap: 4px; align-items: flex-start; }
+  .arquivos .linha .nome { flex: 1; min-width: 0; }
+  .alca { flex: none; width: 18px; text-align: center; cursor: grab; user-select: none; opacity: .55; font-size: 14px; line-height: 18px; }
+  .alca:hover { opacity: 1; }
+  .icone-texto { flex: none; width: 22px; height: 20px; border-radius: 5px; font-size: 12px; line-height: 20px; text-align: center; opacity: .65; }
+  .icone-texto:hover:not(:disabled) { opacity: 1; background: rgba(28,90,138,.15); }
+  .arquivos li.arrastando { opacity: .4; }
+  .arquivos li.soltar-antes { box-shadow: inset 0 3px 0 #1c5a8a; }
+  .arquivos li.soltar-depois { box-shadow: inset 0 -3px 0 #1c5a8a; }
+  .arquivos li.vazio { font-size: 12px; opacity: .75; border-bottom: 0; }
+  .caixa { margin-top: 6px; padding: 7px; background: #fff; border: 1px solid #b9d0e4; border-radius: 7px; }
+  .caixa .texto, .caixa .rotulo { font-size: 12px; font-weight: 600; margin-bottom: 5px; overflow-wrap: anywhere; }
+  .caixa select, .caixa input.texto { margin-bottom: 5px; }
+  input.texto { width: 100%; font: inherit; font-size: 12px; color: inherit; background: #fff; border: 1px solid #b9d0e4; border-radius: 6px; padding: 4px 6px; }
+  .acoes.coluna { flex-direction: column; }
+  .criar-pasta { margin-top: 6px; }
+  .link { font-size: 12px; text-decoration: underline; color: #1c5a8a; }
 `;
 
 function pintarCartaoAcompanhamento_(registros, erro) {
@@ -2810,33 +2835,137 @@ const PERGUNTA_PASTA_ANEXOS_ = {
   divisao: ["Este objeto é dividido. Qual pasta usar?", "divisaoPasta"]
 };
 
-/** Sem certeza, quem decide é o usuário: nunca se escolhe uma pasta por aproximação. */
+// Sugestões de nome ao criar pastas de objeto e de fonte (os nomes que a busca da base já reconhece).
+const SUGESTOES_PASTA_OBJETO_ = ["SUS", "TESOURO", "PISO ENF", "SAZONALIDADE", "RENEGOCIACAO"];
+const SUGESTOES_PASTA_FONTE_ = ["SUS", "TESOURO"];
+const LIMITE_ENVIO_BASE_BYTES_ = 25 * 1024 * 1024; // o mesmo do serviço de arquivos
+
+/** Sem certeza, quem decide é o usuário: nunca se escolhe uma pasta por aproximação. Também dá para criar a pasta que falta. */
 function pedirEscolhaDePasta_(painel, registro, escolha, dados) {
   const [pergunta, campo] = PERGUNTA_PASTA_ANEXOS_[dados.falta];
   painel.appendChild(elementoConferencia_("div", "aviso", pergunta));
-  if (!dados.opcoes.length) {
-    painel.appendChild(elementoConferencia_("div", "aviso", "Essa pasta ainda não tem subpastas na base de documentos."));
-    painel.appendChild(botaoCancelarConferencia_());
-    return;
-  }
-  const lista = elementoConferencia_("select", "escolha");
-  lista.setAttribute("aria-label", pergunta);
-  for (const nome of dados.opcoes) {
-    const opcao = elementoConferencia_("option", "", nome);
-    opcao.value = nome;
-    lista.appendChild(opcao);
-  }
-  const acoes = elementoConferencia_("div", "acoes");
-  const continuar = elementoConferencia_("button", "anexar", "Continuar");
-  continuar.type = "button";
-  continuar.addEventListener("click", () => {
-    const nova = Object.assign({}, escolha, { [campo]: lista.value });
+  const continuarCom = nome => {
+    const nova = Object.assign({}, escolha, { [campo]: nome });
     if (dados.unidadePasta) nova.unidadePasta = dados.unidadePasta;
     if (dados.objetoPasta) nova.objetoPasta = dados.objetoPasta;
     abrirConferenciaDocumentos_(registro, nova);
+  };
+  const acoes = elementoConferencia_("div", "acoes");
+  if (dados.opcoes.length) {
+    const lista = elementoConferencia_("select", "escolha");
+    lista.setAttribute("aria-label", pergunta);
+    for (const nome of dados.opcoes) {
+      const opcao = elementoConferencia_("option", "", nome);
+      opcao.value = nome;
+      lista.appendChild(opcao);
+    }
+    const continuar = elementoConferencia_("button", "anexar", "Continuar");
+    continuar.type = "button";
+    continuar.addEventListener("click", () => continuarCom(lista.value));
+    painel.appendChild(lista);
+    acoes.append(botaoCancelarConferencia_(), continuar);
+  } else {
+    painel.appendChild(elementoConferencia_("div", "aviso", "Essa pasta ainda não tem subpastas na base de documentos."));
+    acoes.append(botaoCancelarConferencia_());
+  }
+  painel.appendChild(acoes);
+
+  // Criar a pasta que falta (pedido do usuário, 2026-11-24): a busca continua com a pasta nova.
+  const nivel = dados.falta === "unidade" ? "unidade" : dados.falta === "objeto" ? "objeto" : "fonte";
+  const contexto = {
+    tipos: dados.tipos || [], sugestoesUnidade: dados.sugestoesUnidade || [],
+    unidadeId: dados.unidadeId, objetoId: dados.objetoId,
+    nomeInicial: nivel === "unidade" ? registro.unidade : nivel === "fonte" ? registro.fonte : ""
+  };
+  const area = elementoConferencia_("div", "criar-pasta");
+  const abrir = elementoConferencia_("button", "link", "+ Criar pasta nova");
+  abrir.type = "button";
+  abrir.addEventListener("click", () => {
+    abrir.hidden = true;
+    montarCriadorDePasta_(area, [nivel], contexto, pasta => continuarCom(pasta.nome), () => { abrir.hidden = false; });
   });
-  acoes.append(botaoCancelarConferencia_(), continuar);
-  painel.append(lista, acoes);
+  area.appendChild(abrir);
+  painel.appendChild(area);
+}
+
+/**
+ * Formulário de pasta nova. niveis: quais dá para escolher ("unidade", "objeto", "fonte").
+ * Unidade: escolhe a pasta de tipo (UPA, Hospital…) e sugere as unidades do app que ainda não têm pasta.
+ */
+function montarCriadorDePasta_(area, niveis, contexto, aoCriar, aoFechar) {
+  const caixa = elementoConferencia_("div", "caixa");
+  const rotuloNivel = { unidade: "Unidade", objeto: "Objeto (nesta unidade)", fonte: "Fonte (neste objeto)" };
+  let seletorNivel = null;
+  if (niveis.length > 1) {
+    seletorNivel = elementoConferencia_("select", "");
+    seletorNivel.setAttribute("aria-label", "Tipo de pasta");
+    niveis.forEach(n => { const o = elementoConferencia_("option", "", "Pasta de " + rotuloNivel[n]); o.value = n; seletorNivel.appendChild(o); });
+    caixa.appendChild(seletorNivel);
+  } else {
+    caixa.appendChild(elementoConferencia_("div", "rotulo", "Nova pasta de " + rotuloNivel[niveis[0]]));
+  }
+  const tipo = elementoConferencia_("select", "");
+  tipo.setAttribute("aria-label", "Dentro de qual tipo");
+  const nome = elementoConferencia_("input", "texto");
+  nome.type = "text";
+  nome.placeholder = "Nome da pasta";
+  nome.setAttribute("aria-label", "Nome da pasta");
+  const idLista = "gaocg-sugestoes-" + Math.random().toString(36).slice(2);
+  const sugestoes = elementoConferencia_("datalist", "");
+  sugestoes.id = idLista;
+  nome.setAttribute("list", idLista);
+  const status = elementoConferencia_("div", "detalhe", "");
+  const acoes = elementoConferencia_("div", "acoes");
+  const cancelar = elementoConferencia_("button", "secundario", "Fechar");
+  cancelar.type = "button";
+  const criar = elementoConferencia_("button", "anexar", "Criar pasta");
+  criar.type = "button";
+  acoes.append(cancelar, criar);
+  caixa.append(tipo, nome, sugestoes, status, acoes);
+  area.appendChild(caixa);
+
+  const nivelAtual = () => (seletorNivel ? seletorNivel.value : niveis[0]);
+  const preencher = () => {
+    const n = nivelAtual();
+    sugestoes.textContent = "";
+    const lista = n === "unidade" ? contexto.sugestoesUnidade.map(s => s.nome) : n === "objeto" ? SUGESTOES_PASTA_OBJETO_ : SUGESTOES_PASTA_FONTE_;
+    lista.forEach(v => { const o = document.createElement("option"); o.value = v; sugestoes.appendChild(o); });
+    tipo.hidden = n !== "unidade";
+    if (n === "unidade" && !tipo.options.length) {
+      contexto.tipos.forEach(t => { const o = elementoConferencia_("option", "", "Dentro de: " + t.nome); o.value = t.id; tipo.appendChild(o); });
+    }
+    status.textContent = n === "unidade" && contexto.sugestoesUnidade.length
+      ? contexto.sugestoesUnidade.length + " unidade(s) do app ainda sem pasta: comece a digitar para ver."
+      : "";
+  };
+  // Escolher uma unidade sugerida já acerta a pasta do tipo dela.
+  nome.addEventListener("input", () => {
+    if (nivelAtual() !== "unidade") return;
+    const s = contexto.sugestoesUnidade.find(x => x.nome === nome.value);
+    if (s && s.tipoPastaId) tipo.value = s.tipoPastaId;
+  });
+  if (seletorNivel) seletorNivel.addEventListener("change", () => { nome.value = ""; preencher(); });
+  cancelar.addEventListener("click", () => { area.removeChild(caixa); if (aoFechar) aoFechar(); });
+  criar.addEventListener("click", async () => {
+    const n = nivelAtual();
+    const paiId = n === "unidade" ? tipo.value : n === "objeto" ? contexto.unidadeId : contexto.objetoId;
+    if (!nome.value.trim()) { status.textContent = "Informe o nome da pasta."; return; }
+    if (!paiId) { status.textContent = n === "unidade" ? "Não há pastas de tipo na base." : "Abra primeiro a pasta da unidade."; return; }
+    criar.disabled = true;
+    status.textContent = "Criando…";
+    try {
+      const r = await pedirAoAppGaocg_("criarPastaBase", { paiId: paiId, nome: nome.value.trim() });
+      status.textContent = "Pasta \"" + r.pasta.nome + "\" criada.";
+      aoCriar(r.pasta, n);
+    } catch (erro) {
+      status.textContent = String(erro && erro.message ? erro.message : erro);
+      criar.disabled = false;
+    }
+  });
+  if (contexto.nomeInicial && niveis.length === 1) nome.value = contexto.nomeInicial;
+  preencher();
+  if (nome.value) nome.dispatchEvent(new Event("input"));
+  nome.focus();
 }
 
 async function abrirConferenciaDocumentos_(registro, escolha) {
@@ -2857,11 +2986,6 @@ async function abrirConferenciaDocumentos_(registro, escolha) {
       pedirEscolhaDePasta_(painel, registro, escolha, dados);
       return;
     }
-    if (!dados.arquivos.length) {
-      painel.appendChild(elementoConferencia_("div", "aviso", "A pasta " + dados.caminho + " está vazia."));
-      painel.appendChild(botaoCancelarConferencia_());
-      return;
-    }
 
     // Os tipos vêm da própria tela do SEI: abrir o cadastro não grava nada.
     painel.appendChild(elementoConferencia_("div", "aviso", "Conferindo os tipos no SEI…"));
@@ -2880,113 +3004,307 @@ async function abrirConferenciaDocumentos_(registro, escolha) {
   }
 }
 
+function arquivoParaBase64_(arquivo) {
+  return new Promise((resolver, rejeitar) => {
+    const leitor = new FileReader();
+    leitor.onload = () => resolver(String(leitor.result).split(",")[1] || "");
+    leitor.onerror = () => rejeitar(leitor.error || new Error("Não consegui ler o arquivo."));
+    leitor.readAsDataURL(arquivo);
+  });
+}
+
+/** Abre o seletor de arquivos do computador e devolve os escolhidos (lista vazia se cancelar). */
+function escolherArquivos_(multiplos) {
+  return new Promise(resolver => {
+    const entrada = document.createElement("input");
+    entrada.type = "file";
+    entrada.multiple = !!multiplos;
+    entrada.addEventListener("change", () => resolver(Array.from(entrada.files || [])));
+    entrada.addEventListener("cancel", () => resolver([]));
+    entrada.click();
+  });
+}
+
 /**
- * A ordem dos cliques é a ordem na árvore (pedido do usuário, 2026-11-19): o SEI põe cada
- * documento novo no fim da árvore e a fila anexa um de cada vez, na ordem em que entrou.
- * Por isso nada vem marcado: cada documento marcado mostra a posição em que vai entrar.
+ * Conferência dos documentos da pasta (refeita a pedido do usuário, 2026-11-24):
+ * - a ordem é a da lista, de cima para baixo (o primeiro é o primeiro a entrar na árvore); muda-se
+ *   arrastando pela alça; a caixinha só diz se o documento entra ou não;
+ * - "Salvar ordem" guarda a ordem desta pasta para quem está usando (cada usuário tem a sua);
+ * - dá para enviar, substituir e excluir documentos da pasta e criar pastas novas.
+ * O SEI põe cada documento novo no fim da árvore e a fila anexa um de cada vez, na ordem da lista.
  */
 function montarConferencia_(painel, dados, selSerie) {
   const config = Object.assign({}, configAnexo_);
   const opcoesTipo = Array.from(selSerie.options).filter(o => o.value && o.value !== "null");
   const padrao = opcaoDoTipo_(selSerie, config.tipoDocumento);
-
-  painel.appendChild(elementoConferencia_("div", "caminho", dados.caminho));
-  const todos = document.createElement("input");
-  todos.type = "checkbox";
-  const rotuloTodos = elementoConferencia_("label", "nome todos");
-  rotuloTodos.append(todos, elementoConferencia_("span", "", "Marcar/desmarcar todos (na ordem da lista)"));
-  painel.appendChild(rotuloTodos);
-  const lista = elementoConferencia_("ul", "arquivos");
-  const linhas = [];
-
-  for (const arquivo of dados.arquivos) {
+  const novoItem = arquivo => {
     const nomeArquivo = nomeSemExtensao_(arquivo.nome);
     const deduzido = config.tipoPeloNome ? identificarTipoPeloNome_(nomeArquivo, selSerie) : null;
     const opcaoInicial = deduzido ? deduzido.opcao : padrao;
     const nomeArvore = deduzido ? deduzido.nomeArvore : nomeArquivo;
-    const tipoInicial = opcaoInicial ? (opcaoInicial.textContent || "").trim() : "";
-    const repetido = documentoJaNaArvore_(tipoInicial, nomeArvore);
+    const tipoTexto = opcaoInicial ? (opcaoInicial.textContent || "").trim() : "";
+    return {
+      arquivo: arquivo, deduzido: !!deduzido, marcado: false, nomeArvore: nomeArvore,
+      tipoValor: opcaoInicial ? opcaoInicial.value : "",
+      repetido: documentoJaNaArvore_(tipoTexto, nomeArvore) // uma vez só: ler a árvore a cada arraste pesaria
+    };
+  };
 
-    const item = elementoConferencia_("li", deduzido ? "" : "sem-tipo");
-    const rotulo = elementoConferencia_("label", "nome");
-    const marcar = document.createElement("input");
-    marcar.type = "checkbox";
-    const grandeDemais = Number(arquivo.tamanho) > LIMITE_DOCUMENTO_BASE_BYTES_;
-    marcar.checked = false;
-    marcar.disabled = grandeDemais;
-    const posicao = elementoConferencia_("span", "posicao", "");
-    posicao.title = "Posição na árvore do SEI, de cima para baixo";
-    rotulo.append(marcar, elementoConferencia_("span", "", arquivo.nome), posicao);
-    const detalhe = [dataCurta_(arquivo.modificado) && "alterado em " + dataCurta_(arquivo.modificado), tamanhoCurto_(arquivo.tamanho)].filter(Boolean).join(" · ");
-    const seletor = elementoConferencia_("select", "tipo");
-    seletor.setAttribute("aria-label", "Tipo de " + arquivo.nome);
-    for (const opcao of opcoesTipo) {
-      const nova = elementoConferencia_("option", "", (opcao.textContent || "").trim());
-      nova.value = opcao.value;
-      seletor.appendChild(nova);
-    }
-    if (opcaoInicial) seletor.value = opcaoInicial.value;
-    item.append(rotulo, seletor, elementoConferencia_("div", "detalhe", detalhe));
-    if (!deduzido) item.appendChild(elementoConferencia_("div", "alerta", "Tipo não identificado pelo nome: confira."));
-    if (grandeDemais) item.appendChild(elementoConferencia_("div", "alerta", "Tem mais de 35 MB: anexe arrastando para a árvore."));
-    if (repetido) item.appendChild(elementoConferencia_("div", "alerta", "Parece já estar na árvore."));
-    lista.appendChild(item);
-    linhas.push({ arquivo: arquivo, marcar: marcar, seletor: seletor, nomeArvore: nomeArvore, posicao: posicao });
-  }
+  // Ordem inicial: a salva (dos arquivos que ainda existem) e depois os outros, por nome.
+  const salva = dados.ordemSalva || [];
+  const porId = new Map(dados.arquivos.map(a => [a.id, a]));
+  const itens = salva.filter(id => porId.has(id)).map(id => novoItem(porId.get(id)))
+    .concat(dados.arquivos.filter(a => salva.indexOf(a.id) === -1).map(novoItem));
+  let ordemMudou = false;
+  let ocupado = false;
+
+  painel.appendChild(elementoConferencia_("div", "caminho", dados.caminho));
+  const status = elementoConferencia_("div", "status", "");
+  status.setAttribute("role", "status");
+  const ferramentas = elementoConferencia_("div", "ferramentas");
+  const botao = (texto, titulo) => {
+    const b = elementoConferencia_("button", "secundario pequeno", texto);
+    b.type = "button";
+    if (titulo) b.title = titulo;
+    return b;
+  };
+  const salvarOrdem = botao("Salvar ordem", "Guarda esta ordem para esta pasta: da próxima vez ela já vem assim (só para você)");
+  const adicionar = botao("+ Adicionar", "Envia arquivos do computador para esta pasta do Drive");
+  const novaPasta = botao("+ Pasta", "Cria uma pasta nova na base de documentos");
+  ferramentas.append(salvarOrdem, adicionar, novaPasta);
+  const areaPasta = elementoConferencia_("div", "criar-pasta");
+  painel.append(ferramentas, areaPasta, status);
+
+  const todos = document.createElement("input");
+  todos.type = "checkbox";
+  const rotuloTodos = elementoConferencia_("label", "nome todos");
+  rotuloTodos.append(todos, elementoConferencia_("span", "", "Marcar/desmarcar todos"));
+  painel.appendChild(rotuloTodos);
+  const lista = elementoConferencia_("ul", "arquivos");
   painel.appendChild(lista);
-
+  painel.appendChild(elementoConferencia_("div", "detalhe", "Arraste pela alça ⠿ para mudar a ordem: o de cima entra primeiro na árvore."));
   const nivel = NOME_NIVEL_ANEXO_[config.nivelAcesso] || NOME_NIVEL_ANEXO_.publico;
   painel.appendChild(elementoConferencia_("div", "detalhe", "Nível: " + nivel + " · Data: hoje · Nato-digital"));
-
   const acoes = elementoConferencia_("div", "acoes");
   const confirmar = elementoConferencia_("button", "anexar");
   confirmar.type = "button";
-  const ordem = [];
-  const marcaveis = linhas.filter(l => !l.marcar.disabled);
-  const contar = () => {
-    linhas.forEach(l => { const i = ordem.indexOf(l); l.posicao.textContent = i === -1 ? "" : (i + 1) + "º"; });
-    confirmar.textContent = ordem.length ? "Anexar " + ordem.length + " documento(s) nesta ordem" : "Marque os documentos na ordem da árvore";
-    confirmar.disabled = !ordem.length;
-    todos.checked = !!ordem.length && ordem.length === marcaveis.length;
-    todos.indeterminate = !!ordem.length && ordem.length < marcaveis.length;
+  acoes.append(botaoCancelarConferencia_(), confirmar);
+  painel.appendChild(acoes);
+
+  const avisar = (texto, ehErro) => { status.textContent = texto || ""; status.classList.toggle("erro", !!ehErro); };
+  const podeMarcar = item => Number(item.arquivo.tamanho) <= LIMITE_DOCUMENTO_BASE_BYTES_;
+  const atualizarResumo = () => {
+    const marcaveis = itens.filter(podeMarcar);
+    const marcados = itens.filter(i => i.marcado);
+    confirmar.textContent = marcados.length ? "Anexar " + marcados.length + " documento(s) nesta ordem" : "Marque os documentos que entram";
+    confirmar.disabled = !marcados.length || ocupado;
+    todos.disabled = !marcaveis.length || ocupado;
+    todos.checked = !!marcados.length && marcados.length === marcaveis.length;
+    todos.indeterminate = !!marcados.length && marcados.length < marcaveis.length;
+    salvarOrdem.disabled = !itens.length || ocupado;
+    salvarOrdem.textContent = ordemMudou ? "Salvar ordem •" : "Salvar ordem";
+    [adicionar, novaPasta].forEach(b => { b.disabled = ocupado; });
+    let posicao = 0;
+    itens.forEach(i => { if (i.posicao) i.posicao.textContent = i.marcado ? (++posicao) + "º" : ""; });
   };
-  todos.disabled = !marcaveis.length;
-  // Marcar todos acrescenta os que faltam na ordem da lista, depois dos já marcados.
-  todos.addEventListener("change", () => {
-    if (todos.checked) {
-      marcaveis.filter(l => !l.marcar.checked).forEach(l => { l.marcar.checked = true; ordem.push(l); });
-    } else {
-      marcaveis.forEach(l => { l.marcar.checked = false; });
-      ordem.length = 0;
+  const ocupar = async (texto, tarefa) => {
+    if (ocupado) return;
+    ocupado = true;
+    avisar(texto);
+    desenhar();
+    try { await tarefa(); } catch (erro) { avisar(String(erro && erro.message ? erro.message : erro), true); }
+    finally { ocupado = false; desenhar(); }
+  };
+
+  /* ---- arrastar para ordenar ---- */
+  let arrastado = null;
+  const limparMarcasDeSoltar = () => lista.querySelectorAll(".soltar-antes, .soltar-depois").forEach(el => el.classList.remove("soltar-antes", "soltar-depois"));
+  const moverPara = (item, alvo, depois) => {
+    const de = itens.indexOf(item);
+    if (de === -1 || item === alvo) return;
+    itens.splice(de, 1);
+    const para = itens.indexOf(alvo) + (depois ? 1 : 0);
+    itens.splice(para, 0, item);
+    ordemMudou = true;
+  };
+
+  /* ---- excluir e substituir (pergunta o que fazer com o arquivo antigo) ---- */
+  const perguntarDestino = (li, pergunta, aoEscolher) => {
+    const caixa = elementoConferencia_("div", "caixa");
+    caixa.appendChild(elementoConferencia_("div", "texto", pergunta));
+    const linha = elementoConferencia_("div", "acoes coluna");
+    const lixeira = botao("Mover para a lixeira do Drive (dá para recuperar)");
+    const permanente = botao("Excluir permanentemente");
+    permanente.classList.add("perigo");
+    const cancelar = botao("Cancelar");
+    linha.append(lixeira, permanente, cancelar);
+    caixa.appendChild(linha);
+    li.appendChild(caixa);
+    const fechar = () => { if (caixa.parentNode) caixa.parentNode.removeChild(caixa); };
+    lixeira.addEventListener("click", () => { fechar(); aoEscolher(false); });
+    permanente.addEventListener("click", () => { fechar(); aoEscolher(true); });
+    cancelar.addEventListener("click", fechar);
+  };
+  const excluir = (item, li) => perguntarDestino(li, "Excluir \"" + item.arquivo.nome + "\" desta pasta?", permanenteSim =>
+    ocupar("Excluindo…", async () => {
+      await pedirAoAppGaocg_("excluirDocumentoBase", { id: item.arquivo.id, permanente: permanenteSim });
+      itens.splice(itens.indexOf(item), 1);
+      avisar("\"" + item.arquivo.nome + "\" " + (permanenteSim ? "excluído permanentemente." : "foi para a lixeira do Drive."));
+    }));
+  const substituir = async (item, li) => {
+    const [novo] = await escolherArquivos_(false);
+    if (!novo) return;
+    if (novo.size > LIMITE_ENVIO_BASE_BYTES_) { avisar("\"" + novo.name + "\" tem mais de 25 MB: envie direto pelo Google Drive.", true); return; }
+    perguntarDestino(li, "Substituir \"" + item.arquivo.nome + "\" por \"" + novo.name + "\". O que fazer com o antigo?", permanenteSim =>
+      ocupar("Substituindo…", async () => {
+        const r = await pedirAoAppGaocg_("substituirDocumentoBase", {
+          id: item.arquivo.id, nome: novo.name, tipo: novo.type || "application/pdf", base64: await arquivoParaBase64_(novo), permanente: permanenteSim
+        });
+        // O novo fica na posição do antigo e continua marcado se o antigo estava.
+        const trocado = novoItem(r.arquivo);
+        trocado.marcado = item.marcado && podeMarcar(trocado);
+        itens.splice(itens.indexOf(item), 1, trocado);
+        avisar("\"" + item.arquivo.nome + "\" substituído por \"" + r.arquivo.nome + "\".");
+      }));
+  };
+
+  function desenhar() {
+    lista.textContent = "";
+    if (!itens.length) lista.appendChild(elementoConferencia_("li", "vazio", "A pasta está vazia. Use \"+ Adicionar\" para enviar documentos."));
+    for (const item of itens) {
+      const arquivo = item.arquivo;
+      const li = elementoConferencia_("li", item.deduzido ? "" : "sem-tipo");
+      const linha = elementoConferencia_("div", "linha");
+      const alca = elementoConferencia_("span", "alca", "⠿");
+      alca.title = "Arraste para mudar a ordem";
+      alca.setAttribute("aria-hidden", "true");
+      const rotulo = elementoConferencia_("label", "nome");
+      const marcar = document.createElement("input");
+      marcar.type = "checkbox";
+      marcar.checked = item.marcado;
+      marcar.disabled = !podeMarcar(item) || ocupado;
+      marcar.addEventListener("change", () => { item.marcado = marcar.checked; atualizarResumo(); });
+      item.posicao = elementoConferencia_("span", "posicao", "");
+      item.posicao.title = "Posição na árvore do SEI, de cima para baixo";
+      rotulo.append(marcar, elementoConferencia_("span", "", arquivo.nome), item.posicao);
+      const trocar = elementoConferencia_("button", "icone-texto", "↻");
+      trocar.type = "button";
+      trocar.title = "Substituir por outro arquivo do computador";
+      trocar.setAttribute("aria-label", "Substituir " + arquivo.nome);
+      trocar.disabled = ocupado;
+      trocar.addEventListener("click", () => substituir(item, li));
+      const lixo = elementoConferencia_("button", "icone-texto", "✕");
+      lixo.type = "button";
+      lixo.title = "Excluir da pasta";
+      lixo.setAttribute("aria-label", "Excluir " + arquivo.nome);
+      lixo.disabled = ocupado;
+      lixo.addEventListener("click", () => excluir(item, li));
+      linha.append(alca, rotulo, trocar, lixo);
+
+      const seletor = elementoConferencia_("select", "tipo");
+      seletor.setAttribute("aria-label", "Tipo de " + arquivo.nome);
+      for (const opcao of opcoesTipo) {
+        const nova = elementoConferencia_("option", "", (opcao.textContent || "").trim());
+        nova.value = opcao.value;
+        seletor.appendChild(nova);
+      }
+      if (item.tipoValor) seletor.value = item.tipoValor;
+      seletor.addEventListener("change", () => { item.tipoValor = seletor.value; });
+      const detalhe = [dataCurta_(arquivo.modificado) && "alterado em " + dataCurta_(arquivo.modificado), tamanhoCurto_(arquivo.tamanho)].filter(Boolean).join(" · ");
+      li.append(linha, seletor, elementoConferencia_("div", "detalhe", detalhe));
+      if (!item.deduzido) li.appendChild(elementoConferencia_("div", "alerta", "Tipo não identificado pelo nome: confira."));
+      if (!podeMarcar(item)) li.appendChild(elementoConferencia_("div", "alerta", "Tem mais de 35 MB: anexe arrastando para a árvore."));
+      if (item.repetido) li.appendChild(elementoConferencia_("div", "alerta", "Parece já estar na árvore."));
+
+      // Só a alça começa o arraste: assim a caixinha e o tipo continuam clicáveis.
+      alca.addEventListener("mousedown", () => { li.draggable = !ocupado; });
+      li.addEventListener("dragstart", evento => {
+        arrastado = item;
+        li.classList.add("arrastando");
+        evento.dataTransfer.effectAllowed = "move";
+        evento.dataTransfer.setData("text/plain", arquivo.id);
+      });
+      li.addEventListener("dragend", () => { li.draggable = false; arrastado = null; li.classList.remove("arrastando"); limparMarcasDeSoltar(); });
+      li.addEventListener("dragover", evento => {
+        if (!arrastado || arrastado === item) return;
+        evento.preventDefault();
+        const caixa = li.getBoundingClientRect();
+        const depois = evento.clientY > caixa.top + caixa.height / 2;
+        limparMarcasDeSoltar();
+        li.classList.add(depois ? "soltar-depois" : "soltar-antes");
+      });
+      li.addEventListener("drop", evento => {
+        if (!arrastado || arrastado === item) return;
+        evento.preventDefault();
+        const caixa = li.getBoundingClientRect();
+        moverPara(arrastado, item, evento.clientY > caixa.top + caixa.height / 2);
+        arrastado = null;
+        desenhar();
+      });
+      lista.appendChild(li);
     }
-    contar();
+    atualizarResumo();
+  }
+
+  todos.addEventListener("change", () => {
+    // Só marca ou desmarca: a ordem continua a da lista.
+    itens.forEach(i => { i.marcado = todos.checked && podeMarcar(i); });
+    desenhar();
   });
-  linhas.forEach(l => l.marcar.addEventListener("change", () => {
-    const i = ordem.indexOf(l);
-    if (l.marcar.checked && i === -1) ordem.push(l);
-    if (!l.marcar.checked && i !== -1) ordem.splice(i, 1);
-    contar();
+  salvarOrdem.addEventListener("click", () => ocupar("Salvando a ordem…", async () => {
+    await pedirAoAppGaocg_("salvarOrdemDocumentos", { pastaId: dados.pastaId, ids: itens.map(i => i.arquivo.id) });
+    ordemMudou = false;
+    avisar("Ordem salva: da próxima vez esta pasta já abre assim.");
   }));
-  contar();
+  adicionar.addEventListener("click", async () => {
+    const escolhidos = await escolherArquivos_(true);
+    if (!escolhidos.length) return;
+    ocupar("Enviando " + escolhidos.length + " arquivo(s) para o Drive…", async () => {
+      const falhas = [];
+      for (const f of escolhidos) {
+        if (f.size > LIMITE_ENVIO_BASE_BYTES_) { falhas.push(f.name + ": mais de 25 MB"); continue; }
+        try {
+          const r = await pedirAoAppGaocg_("enviarDocumentoBase", { pastaId: dados.pastaId, nome: f.name, tipo: f.type || "application/pdf", base64: await arquivoParaBase64_(f) });
+          itens.push(novoItem(r.arquivo));
+          ordemMudou = true;
+        } catch (erro) { falhas.push(f.name + ": " + (erro && erro.message ? erro.message : erro)); }
+      }
+      if (falhas.length) throw new Error("Não enviados: " + falhas.join(" · "));
+      avisar(escolhidos.length + " arquivo(s) enviado(s). Eles entraram no fim da lista: arraste e salve a ordem.");
+    });
+  });
+  novaPasta.addEventListener("click", async () => {
+    if (areaPasta.firstChild) return;
+    novaPasta.disabled = true;
+    try {
+      // As pastas de tipo e as sugestões de unidade vêm da mesma busca, sem unidade.
+      const base = await pedirAoAppGaocg_("listarDocumentosProcesso", {});
+      montarCriadorDePasta_(areaPasta, ["unidade", "objeto", "fonte"], {
+        tipos: base.tipos || [], sugestoesUnidade: base.sugestoesUnidade || [], unidadeId: dados.unidadeId, objetoId: dados.objetoId
+      }, pasta => avisar("Pasta \"" + pasta.nome + "\" criada."), () => { novaPasta.disabled = false; });
+    } catch (erro) {
+      avisar(String(erro && erro.message ? erro.message : erro), true);
+      novaPasta.disabled = false;
+    }
+  });
   confirmar.addEventListener("click", async () => {
-    const escolhidas = ordem.slice();
+    const escolhidas = itens.filter(i => i.marcado);
     fecharConferencia_();
     mostrarBaixandoDaBase_(escolhidas.length);
     const inicio = performance.now();
-    const baixados = await baixarDocumentosDaBase_(escolhidas.map(l => l.arquivo));
+    const baixados = await baixarDocumentosDaBase_(escolhidas.map(i => i.arquivo));
     console.info("[GAOCG anexo] " + escolhidas.length + " documento(s) baixado(s) do app em " + Math.round(performance.now() - inicio) + " ms");
-    for (const linha of escolhidas) {
-      const baixado = baixados.get(linha.arquivo.id);
+    for (const item of escolhidas) {
+      const baixado = baixados.get(item.arquivo.id);
       filaAnexos_.push({
-        nome: linha.arquivo.nome,
+        nome: item.arquivo.nome,
         baixar: async () => { if (baixado instanceof Error) throw baixado; return baixado; },
-        config: Object.assign({}, config, { tipoValor: linha.seletor.value, nomeArvore: linha.nomeArvore })
+        config: Object.assign({}, config, { tipoValor: item.tipoValor, nomeArvore: item.nomeArvore })
       });
     }
     if (!anexoEmAndamento_) processarFilaAnexos_();
   });
-  acoes.append(botaoCancelarConferencia_(), confirmar);
-  painel.appendChild(acoes);
+  desenhar();
 }
 
 /* -------- Recibo no app a partir do acompanhamento (pedido do usuário, 2026-11-17) --------
