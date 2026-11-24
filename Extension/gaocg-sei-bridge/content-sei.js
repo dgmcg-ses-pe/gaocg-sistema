@@ -2596,7 +2596,7 @@ const ESTILO_CARTAO_ACOMPANHAMENTO_ = `
   .nome.todos { padding-left: 22px; }
   .ferramentas { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 6px; }
   .secundario.pequeno { padding: 3px 8px; font-size: 11.5px; }
-  .secundario:disabled, .icone-texto:disabled { opacity: .45; cursor: default; }
+  .secundario:disabled, .acao-arquivo:disabled { opacity: .45; cursor: default; }
   .secundario.perigo { background: #f8dcd6; color: #8a1d08; }
   .status { font-size: 11.5px; font-weight: 600; color: #1d6b3a; margin: 2px 0 6px; overflow-wrap: anywhere; }
   .status:empty { display: none; }
@@ -2605,8 +2605,12 @@ const ESTILO_CARTAO_ACOMPANHAMENTO_ = `
   .arquivos .linha .nome { flex: 1; min-width: 0; }
   .alca { flex: none; width: 18px; text-align: center; cursor: grab; user-select: none; opacity: .55; font-size: 14px; line-height: 18px; }
   .alca:hover { opacity: 1; }
-  .icone-texto { flex: none; width: 22px; height: 20px; border-radius: 5px; font-size: 12px; line-height: 20px; text-align: center; opacity: .65; }
-  .icone-texto:hover:not(:disabled) { opacity: 1; background: rgba(28,90,138,.15); }
+  .acao-arquivo { flex: none; width: 26px; height: 24px; border-radius: 6px; border: 1px solid; font-size: 14px; font-weight: 700; line-height: 22px; text-align: center; }
+  .acao-arquivo.renomear, .acao-arquivo.substituir { color: #174c75; background: #dcebf7; border-color: #8fb7d8; }
+  .acao-arquivo.renomear:hover:not(:disabled), .acao-arquivo.substituir:hover:not(:disabled) { color: #fff; background: #1c5a8a; border-color: #1c5a8a; }
+  .acao-arquivo.excluir { color: #a3220a; background: #fbe3de; border-color: #e3a497; }
+  .acao-arquivo.excluir:hover:not(:disabled) { color: #fff; background: #b3290f; border-color: #b3290f; }
+  .arquivos .linha { gap: 3px; }
   .arquivos li.arrastando { opacity: .4; }
   .arquivos li.soltar-antes { box-shadow: inset 0 3px 0 #1c5a8a; }
   .arquivos li.soltar-depois { box-shadow: inset 0 -3px 0 #1c5a8a; }
@@ -3168,6 +3172,71 @@ function montarConferencia_(painel, dados, selSerie) {
       }));
   };
 
+  /**
+   * Renomear (pedido do usuário, 2026-11-24): o nome muda na lista na hora (tipo e nome na árvore
+   * são deduzidos de novo) e vai para o Drive em segundo plano, sem travar o card nem o anexo. Se o
+   * Drive recusar, o nome antigo volta. A extensão do arquivo é mantida.
+   */
+  const renomear = (item, li) => {
+    if (li.querySelector(".caixa")) return;
+    const atual = item.arquivo.nome;
+    const extensao = (atual.match(/\.[A-Za-z0-9]{1,5}$/) || [""])[0];
+    const caixa = elementoConferencia_("div", "caixa");
+    const campo = elementoConferencia_("input", "texto");
+    campo.type = "text";
+    campo.value = extensao ? atual.slice(0, -extensao.length) : atual;
+    campo.setAttribute("aria-label", "Novo nome de " + atual);
+    const linhaBotoes = elementoConferencia_("div", "acoes");
+    const cancelar = botao("Cancelar");
+    const salvar = elementoConferencia_("button", "anexar", "Salvar nome");
+    salvar.type = "button";
+    linhaBotoes.append(cancelar, salvar);
+    caixa.append(campo, linhaBotoes);
+    li.appendChild(caixa);
+    campo.focus();
+    campo.select();
+    const fechar = () => { if (caixa.parentNode) caixa.parentNode.removeChild(caixa); };
+    const confirmarNome = () => {
+      let novo = campo.value.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
+      if (!novo) { campo.focus(); return; }
+      if (extensao && novo.toLowerCase().slice(-extensao.length) !== extensao.toLowerCase()) novo += extensao;
+      fechar();
+      if (novo === atual) return;
+      if (itens.some(i => i !== item && i.arquivo.nome === novo)) { avisar("Já existe outro arquivo \"" + novo + "\" nesta pasta.", true); return; }
+      const antes = { arquivo: item.arquivo, nomeArvore: item.nomeArvore, deduzido: item.deduzido, tipoValor: item.tipoValor, repetido: item.repetido };
+      const aplicar = arquivo => {
+        const r = novoItem(arquivo);
+        item.arquivo = arquivo;
+        item.nomeArvore = r.nomeArvore;
+        item.deduzido = r.deduzido;
+        item.repetido = r.repetido;
+        if (r.deduzido) item.tipoValor = r.tipoValor;
+      };
+      aplicar(Object.assign({}, item.arquivo, { nome: novo }));
+      item.salvandoNome = true;
+      avisar("Salvando o nome no Drive…");
+      desenhar();
+      pedirAoAppGaocg_("renomearDocumentoBase", { id: item.arquivo.id, nome: novo })
+        .then(r => {
+          item.salvandoNome = false;
+          aplicar(Object.assign({}, item.arquivo, r.arquivo));
+          avisar("Nome salvo no Drive: \"" + r.arquivo.nome + "\".");
+        })
+        .catch(erro => {
+          item.salvandoNome = false;
+          Object.assign(item, antes);
+          avisar("O nome não foi salvo: " + (erro && erro.message ? erro.message : erro), true);
+        })
+        .finally(() => { if (painel.isConnected) desenhar(); });
+    };
+    salvar.addEventListener("click", confirmarNome);
+    cancelar.addEventListener("click", fechar);
+    campo.addEventListener("keydown", evento => {
+      if (evento.key === "Enter") { evento.preventDefault(); confirmarNome(); }
+      if (evento.key === "Escape") { evento.preventDefault(); fechar(); }
+    });
+  };
+
   function desenhar() {
     lista.textContent = "";
     if (!itens.length) lista.appendChild(elementoConferencia_("li", "vazio", "A pasta está vazia. Use \"+ Adicionar\" para enviar documentos."));
@@ -3187,19 +3256,20 @@ function montarConferencia_(painel, dados, selSerie) {
       item.posicao = elementoConferencia_("span", "posicao", "");
       item.posicao.title = "Posição na árvore do SEI, de cima para baixo";
       rotulo.append(marcar, elementoConferencia_("span", "", arquivo.nome), item.posicao);
-      const trocar = elementoConferencia_("button", "icone-texto", "↻");
-      trocar.type = "button";
-      trocar.title = "Substituir por outro arquivo do computador";
-      trocar.setAttribute("aria-label", "Substituir " + arquivo.nome);
-      trocar.disabled = ocupado;
-      trocar.addEventListener("click", () => substituir(item, li));
-      const lixo = elementoConferencia_("button", "icone-texto", "✕");
-      lixo.type = "button";
-      lixo.title = "Excluir da pasta";
-      lixo.setAttribute("aria-label", "Excluir " + arquivo.nome);
-      lixo.disabled = ocupado;
-      lixo.addEventListener("click", () => excluir(item, li));
-      linha.append(alca, rotulo, trocar, lixo);
+      const botaoAcao = (classe, simbolo, titulo, acao) => {
+        const b = elementoConferencia_("button", "acao-arquivo " + classe, simbolo);
+        b.type = "button";
+        b.title = titulo;
+        b.setAttribute("aria-label", titulo + ": " + arquivo.nome);
+        // Enquanto o nome novo vai para o Drive, substituir/excluir esperam (o resto do card segue livre).
+        b.disabled = ocupado || !!item.salvandoNome;
+        b.addEventListener("click", acao);
+        return b;
+      };
+      linha.append(alca, rotulo,
+        botaoAcao("renomear", "✎", "Renomear", () => renomear(item, li)),
+        botaoAcao("substituir", "↻", "Substituir por outro arquivo do computador", () => substituir(item, li)),
+        botaoAcao("excluir", "✕", "Excluir da pasta", () => excluir(item, li)));
 
       const seletor = elementoConferencia_("select", "tipo");
       seletor.setAttribute("aria-label", "Tipo de " + arquivo.nome);
@@ -3298,7 +3368,11 @@ function montarConferencia_(painel, dados, selSerie) {
       const baixado = baixados.get(item.arquivo.id);
       filaAnexos_.push({
         nome: item.arquivo.nome,
-        baixar: async () => { if (baixado instanceof Error) throw baixado; return baixado; },
+        // Vai com o nome da lista: um nome novo ainda a caminho do Drive não atrasa nem muda o anexo.
+        baixar: async () => {
+          if (baixado instanceof Error) throw baixado;
+          return baixado.name === item.arquivo.nome ? baixado : new File([baixado], item.arquivo.nome, { type: baixado.type });
+        },
         config: Object.assign({}, config, { tipoValor: item.tipoValor, nomeArvore: item.nomeArvore })
       });
     }
