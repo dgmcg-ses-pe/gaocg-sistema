@@ -3686,6 +3686,8 @@ const REGEX_NOME_LE_OB_ = /ordem\s+banc|nota\s+de\s+liquida|\d{4}\s*(?:LE|OB)\s*
 // SEI na unidade SES-GAOCG - é lá que as NEs entram no processo da SOF.
 const REGEX_NOME_NE_ = /\d{4}\s*NE\s*\d{6}|nota\s+de\s+empenho/i;
 const SIGLA_UNIDADE_NE_ = "SES-GAOCG";
+// SOF pronta na árvore (2026-11-24), também só na SES-GAOCG: "SES - SOF - Solicitação Orçamentária e Financeira 157".
+const REGEX_NOME_SOF_ = /\bSOF\b|Solicita[çc][ãa]o\s+Or[çc]ament[áa]ria/i;
 const estadoReciboSei_ = { raiz: null, chave: "", execucao: null, arvore: null, interrompido: false, itens: [], semSof: false, tentados: new Set() };
 
 /** Sigla da unidade em que o usuário está logado no SEI (topo da tela), sem espaços: "SES-GAOCG". */
@@ -3703,8 +3705,10 @@ function siglaUnidadeSei_() {
   return "";
 }
 
-/** Qual fluxo o documento segue: "recibo" (LE/OB), "ne" (NE na unidade SES-GAOCG) ou "" (nenhum). */
-function fluxoDoDocumentoSei_(nome, unidadeNe) {
+/** Qual fluxo o documento segue: "recibo" (LE/OB), "ne"/"sof" (na unidade SES-GAOCG) ou "" (nenhum). */
+function fluxoDoDocumentoSei_(nome, unidadeNe, conteudo) {
+  if (unidadeNe && REGEX_NOME_SOF_.test(nome) && !REGEX_NOME_NE_.test(nome) && !REGEX_NOME_LE_OB_.test(nome)) return "sof";
+  if (conteudo !== "pdf") return "";
   if (REGEX_NOME_LE_OB_.test(nome)) return "recibo";
   if (unidadeNe && REGEX_NOME_NE_.test(nome)) return "ne";
   return "";
@@ -3728,8 +3732,10 @@ function documentosDaArvoreSei_(doc) {
   let m;
   while ((m = reNo.exec(texto))) {
     const src = fontes[m[1]] || "";
-    if (!/acao=documento_download_anexo/.test(src)) continue;
-    documentos.push({ id: m[2], nome: m[3], url: new URL(src, doc.baseURI || doc.location.href).href });
+    // PDF (documento externo) ou HTML (documento interno, usado só para a SOF - 2026-11-24).
+    const conteudo = /acao=documento_download_anexo/.test(src) ? "pdf" : /acao=documento_visualizar/.test(src) ? "html" : "";
+    if (!conteudo) continue;
+    documentos.push({ id: m[2], nome: m[3], conteudo: conteudo, url: new URL(src, doc.baseURI || doc.location.href).href });
   }
   return { idProcesso: processo[1], numeroProcesso: processo[2], documentos: documentos };
 }
@@ -3885,6 +3891,7 @@ function situacaoItemReciboSei_(item) {
   const r = item.registro;
   if (item.lendo) return { classe: "lendo", progresso: true };
   if (!r) return { classe: "lendo", marca: "…", texto: "Na fila" };
+  if (item.fluxo === "sof") return situacaoItemSofSei_(item);
   if (item.fluxo === "ne") return situacaoItemNeSei_(r);
   // Fica no cartão de vez (pedido do usuário, 2026-11-11): o app guarda o resultado, então reabrir o
   // processo mostra de novo onde cada documento foi parar.
@@ -3964,6 +3971,16 @@ function pintarCartaoReciboSei_(aviso, ehErro) {
     if (s.progresso) situacao.innerHTML = textoProgressoHtml_(item);
     else situacao.textContent = s.texto;
     texto.append(doc, situacao);
+    if (s.conferirSof) {
+      const botao = document.createElement("button");
+      botao.type = "button";
+      botao.className = "anexar conferir-sof";
+      botao.textContent = s.conferirSof;
+      botao.addEventListener("click", () => abrirConferenciaSofSei_(item, li));
+      texto.appendChild(botao);
+      // A árvore e as NEs repintam o cartão: o formulário aberto volta com o que já foi digitado.
+      if (item.formSof) texto.appendChild(item.formSof);
+    }
     if (s.reanexar) {
       const botao = document.createElement("button");
       botao.type = "button";
@@ -4009,7 +4026,10 @@ async function sincronizarReciboSei_(arvore) {
     const porId = {};
     (vistos || []).forEach(v => { porId[String(v.id_documento_sei)] = v; });
     // Um resultado final já conhecido nesta página vale mesmo que a lista do app venha atrasada.
-    e.itens.forEach(item => { item.registro = porId[item.id] || (item.registro && item.registro.final ? item.registro : null); });
+    e.itens.forEach(item => {
+      if (item.fluxo === "sof") return; // a leitura da SOF não fica registrada no app: vale a desta página
+      item.registro = porId[item.id] || (item.registro && item.registro.final ? item.registro : null);
+    });
     pintarCartaoReciboSei_();
 
     // Lentidão ao anexar (2026-11-23): a árvore recarrega depois de cada anexo e esta conferência
@@ -4018,7 +4038,9 @@ async function sincronizarReciboSei_(arvore) {
     // processo (reabrir o processo tenta de novo), e nada é baixado enquanto a fila de anexos anda.
     const chaveTentativa = item => arvore.idProcesso + ":" + item.id;
     let anexouNe = false;
-    for (const item of e.itens) {
+    // A SOF vem antes: sem ela no app as NEs não têm onde entrar.
+    const ordem = e.itens.filter(i => i.fluxo === "sof").concat(e.itens.filter(i => i.fluxo !== "sof"));
+    for (const item of ordem) {
       if (!vigente()) return;
       if (!reciboSeiAtivo_) { e.interrompido = true; return; }
       if (item.registro && item.registro.final) continue;
@@ -4026,6 +4048,7 @@ async function sincronizarReciboSei_(arvore) {
       await esperarFilaDeAnexos_();
       if (!vigente()) return;
       e.tentados.add(chaveTentativa(item));
+      if (item.fluxo === "sof") { await processarItemSofSei_(item, arvore, vigente); continue; }
       await processarItemReciboSei_(item, arvore, null, vigente);
       if (item.fluxo === "ne" && item.registro && item.registro.resultado === "anexado") anexouNe = true;
     }
@@ -4045,12 +4068,340 @@ async function sincronizarReciboSei_(arvore) {
   }
 }
 
+/* -------- SOF pronta no SEI para o app (pedido do usuário, 2026-11-24) --------
+ *
+ * Com o SEI na unidade SES-GAOCG, a SOF da árvore (documento interno ou PDF) vai para o app, que
+ * lê os dados (lerSofSei, só leitura). O cartão mostra o que entraria; a SOF só é criada, ou
+ * completada nos campos vazios, no clique em "Criar SOF no app" (importarSofSei). Em seguida as
+ * NEs do processo são tentadas de novo: sem SOF no app elas ficavam pendentes.
+ */
+const MESES_SOF_SEI_ = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+const FONTES_SOF_SEI_ = ["TESOURO", "SUS", "Outra"];
+
+const ESTILO_SOF_SEI_ = `
+  .sof-form { margin-top: 8px; padding: 9px; background: #fff; border: 1px solid #c9dbea; border-radius: 8px; color: #1b3247; }
+  .sof-form .linha { margin-bottom: 7px; }
+  .sof-form label.rot { display: block; font-size: 11px; font-weight: 600; opacity: .75; margin-bottom: 2px; }
+  .sof-form input, .sof-form select { width: 100%; box-sizing: border-box; font: inherit; font-size: 12px; padding: 4px 6px;
+    border: 1px solid #b9d0e4; border-radius: 6px; background: #fff; color: inherit; }
+  .sof-form .duas { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .sof-form .duas > * { min-width: 0; }
+  .sof-form .duas.fonte-obj { grid-template-columns: 88px 1fr; }
+  .sof-form input[type=date] { padding: 4px 3px; font-size: 11.5px; }
+  .sof-form .fonte { border-top: 1px dashed #b9d0e4; padding-top: 7px; margin-top: 7px; }
+  .sof-form .meses { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+  .sof-form .meses label { font-size: 10.5px; opacity: .7; }
+  .sof-form .meses input { padding: 3px 4px; font-size: 11px; text-align: right; }
+  .sof-form .total { font-size: 11.5px; font-weight: 600; margin-top: 4px; text-align: right; }
+  .sof-form .avisos { margin: 0 0 8px; padding: 6px 8px 6px 20px; background: #fff4d6; border-radius: 6px; font-size: 11.5px; color: #6d4700; }
+  .sof-form .nota { font-size: 11px; opacity: .75; margin: 0 0 7px; }
+  .sof-form details { font-size: 11.5px; margin: 4px 0 8px; }
+  .sof-form summary { cursor: pointer; font-weight: 600; }
+  .sof-form dl { margin: 5px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 2px 6px; }
+  .sof-form dt { opacity: .7; }
+  .sof-form dd { margin: 0; overflow-wrap: anywhere; }
+  .sof-form .botoes { display: flex; gap: 6px; }
+  .sof-form .botoes .anexar { flex: 1; margin: 0; }
+  .sof-form .resultado { font-size: 12px; margin-top: 7px; }
+  .sof-form .resultado.erro { color: #a3220a; font-weight: 600; }
+  .conferir-sof { margin-top: 5px; font-size: 11.5px; padding: 4px 9px; }
+`;
+
+function dinheiroSofSei_(valor) {
+  return "R$ " + Number(valor || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function lerDinheiroSofSei_(texto) {
+  const limpo = String(texto || "").replace(/[R$\s]/g, "");
+  if (!limpo) return 0;
+  const numero = Number(limpo.includes(",") ? limpo.replace(/\./g, "").replace(",", ".") : limpo);
+  return Number.isFinite(numero) ? Math.round(numero * 100) / 100 : 0;
+}
+
+/** Número do documento na árvore: "SOF ... Financeira 157 (80026948)" -> "80026948". */
+function protocoloDoNomeSei_(nome) {
+  return (/\((\d{6,})\)\s*$/.exec(String(nome || "")) || [])[1] || "";
+}
+
+/** HTML do documento interno, no charset que o SEI informar (normalmente ISO-8859-1). */
+async function baixarHtmlDaArvore_(url, profundidade) {
+  const controle = new AbortController();
+  const limite = setTimeout(() => controle.abort(), LIMITE_LEITURA_SEI_MS_);
+  try {
+    const resposta = await fetch(url, { credentials: "same-origin", cache: "no-store", signal: controle.signal });
+    if (!resposta.ok) throw new Error("O SEI respondeu com erro (HTTP " + resposta.status + ").");
+    const bytes = await resposta.arrayBuffer();
+    const charset = (/charset=([\w-]+)/i.exec(resposta.headers.get("content-type") || "") || [])[1] || "";
+    let html;
+    try { html = new TextDecoder(charset || "utf-8", { fatal: !charset }).decode(bytes); } catch (e) { html = new TextDecoder("windows-1252").decode(bytes); }
+    // Se vier a moldura com o documento num iframe, segue para o documento.
+    if (!/Or[çc]ament[áa]ria|Or&ccedil;ament/i.test(html) && (profundidade || 0) < 2) {
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      const quadro = doc.querySelector("iframe[src*='documento_visualizar'], iframe#ifrArvoreHtml, iframe[src*='acao=']");
+      if (quadro) return baixarHtmlDaArvore_(new URL(quadro.getAttribute("src"), url).href, (profundidade || 0) + 1);
+    }
+    return html;
+  } catch (e) {
+    if (e && e.name === "AbortError") throw new Error("O SEI demorou demais para entregar a SOF.");
+    throw e;
+  } finally {
+    clearTimeout(limite);
+  }
+}
+
+/** Lê a SOF no app: primeiro sem conteúdo (já importada?), depois com o documento. */
+async function processarItemSofSei_(item, arvore, vigente) {
+  const pintar = () => { if (!vigente || vigente()) pintarCartaoReciboSei_(); };
+  item.lendo = true;
+  item.erro = "";
+  item.progresso = 5;
+  item.etapa = "Conferindo com o app";
+  pintar();
+  const base = { numero_processo: arvore.numeroProcesso, id_documento_sei: item.id, nome_arvore: item.nome, protocolo: protocoloDoNomeSei_(item.nome) };
+  try {
+    let r = await pedirAoAppGaocg_("lerSofSei", base);
+    if (r && r.situacao === "precisa_conteudo") {
+      item.etapa = "Baixando do SEI";
+      item.progresso = 20;
+      pintar();
+      const conteudo = item.conteudo === "html"
+        ? { html: await baixarHtmlDaArvore_(item.url) }
+        : await baixarPdfDaArvore_(item.url).then(pdf => ({ arquivoBase64: pdf.base64, arquivoNome: pdf.nome }));
+      item.etapa = "Lendo a SOF no app";
+      item.progresso = 60;
+      pintar();
+      r = await pedirAoAppGaocg_("lerSofSei", Object.assign({}, base, conteudo));
+    }
+    item.registro = Object.assign({ fluxoSof: true }, r, { final: r && (r.situacao === "importada" || r.situacao === "ignorado") });
+    if (r && r.situacao === "ignorado") item.registro.resultado = "ignorado";
+  } catch (erro) {
+    item.erro = String(erro && erro.message ? erro.message : erro);
+  } finally {
+    item.lendo = false;
+    pintar();
+  }
+}
+
+function situacaoItemSofSei_(item) {
+  const r = item.registro;
+  if (r.situacao === "importada") return { classe: "ok", marca: "✓", texto: "SOF no app: " + (r.sof && r.sof.descricao ? r.sof.descricao : "") + "." };
+  if (r.situacao === "ignorado") return { classe: "ignorado", marca: "–", texto: r.motivo || "Não é uma SOF." };
+  const alvo = (r.existentes || []).find(e => e.id === r.alvo_sugerido);
+  const total = r.lida ? " · " + dinheiroSofSei_(r.lida.total) : "";
+  const texto = alvo
+    ? "Já existe no app (" + alvo.descricao + "): dá para completar o que estiver vazio."
+    : "SOF " + (r.lida && r.lida.sof_numero ? r.lida.sof_numero : "") + total + " ainda não está no app.";
+  return { classe: "pendente", marca: "!", texto: texto, conferirSof: alvo ? "Conferir e completar no app" : "Conferir e criar no app" };
+}
+
+function campoSofSei_(rotulo, controle) {
+  const linha = elementoConferencia_("div", "linha");
+  const r = elementoConferencia_("label", "rot", rotulo);
+  linha.append(r, controle);
+  return linha;
+}
+
+function selectSofSei_(opcoes, valor, vazio) {
+  const sel = document.createElement("select");
+  if (vazio !== undefined) {
+    const o = document.createElement("option");
+    o.value = "";
+    o.textContent = vazio;
+    sel.appendChild(o);
+  }
+  opcoes.forEach(op => {
+    const o = document.createElement("option");
+    o.value = typeof op === "string" ? op : op.valor;
+    o.textContent = typeof op === "string" ? op : op.texto;
+    sel.appendChild(o);
+  });
+  if (valor && ![...sel.options].some(o => o.value === valor)) {
+    const o = document.createElement("option");
+    o.value = valor;
+    o.textContent = valor;
+    sel.appendChild(o);
+  }
+  sel.value = valor || "";
+  return sel;
+}
+
+function inputSofSei_(valor, tipo, lista) {
+  const el = document.createElement("input");
+  el.type = tipo || "text";
+  el.value = valor || "";
+  if (lista) el.setAttribute("list", lista);
+  return el;
+}
+
+/** Conferência da SOF dentro do cartão: o que o app leu, com unidade, tipo, objetos e meses editáveis. */
+function abrirConferenciaSofSei_(item, li) {
+  const existente = li.querySelector(".sof-form");
+  if (existente) { existente.remove(); item.formSof = null; return; }
+  const r = item.registro;
+  const s = r.sugestao;
+  const form = elementoConferencia_("div", "sof-form");
+  const raiz = estadoReciboSei_.raiz;
+  if (raiz && !raiz.getElementById("listaObjetosSofSei")) {
+    const lista = document.createElement("datalist");
+    lista.id = "listaObjetosSofSei";
+    (r.opcoes.objetos || []).forEach(v => { const o = document.createElement("option"); o.value = v; lista.appendChild(o); });
+    raiz.appendChild(lista);
+  }
+
+  if ((r.lida.avisos || []).length) {
+    const avisos = elementoConferencia_("ul", "avisos");
+    r.lida.avisos.forEach(a => avisos.appendChild(elementoConferencia_("li", "", a)));
+    form.appendChild(avisos);
+  }
+
+  const destinos = [{ valor: "", texto: "Criar SOF nova" }].concat((r.existentes || []).map(e => ({ valor: e.id, texto: "Completar " + e.descricao })));
+  const destino = selectSofSei_(destinos, r.alvo_sugerido || "");
+  if ((r.existentes || []).length) form.appendChild(campoSofSei_("Destino no app", destino));
+  const notaCompletar = elementoConferencia_("p", "nota", "Na SOF que já existe, só entram os campos que estão vazios nela; fontes e cronograma só entram se ela não tiver nenhuma fonte.");
+  form.appendChild(notaCompletar);
+
+  const unidade = selectSofSei_((r.opcoes.unidades || []).map(u => ({ valor: u.id, texto: u.nome })), s.unidade_id, "Escolha a unidade");
+  const tipo = selectSofSei_(r.opcoes.tipos || [], s.tipo, "Escolha o tipo");
+  const objeto = inputSofSei_(s.objeto, "text", "listaObjetosSofSei");
+  const numero = inputSofSei_(s.sof_numero);
+  const dea = selectSofSei_(["SIM", "NÃO"], s.dea || "NÃO");
+  const inicio = inputSofSei_(s.periodo_inicio, "date");
+  const fim = inputSofSei_(s.periodo_fim, "date");
+  form.appendChild(campoSofSei_("Unidade", unidade));
+  const duas1 = elementoConferencia_("div", "duas");
+  duas1.append(campoSofSei_("Tipo de SOF", tipo), campoSofSei_("Nº SOF", numero));
+  form.appendChild(duas1);
+  form.appendChild(campoSofSei_("Objeto da SOF", objeto));
+  const duas2 = elementoConferencia_("div", "duas");
+  duas2.append(campoSofSei_("Período (início)", inicio), campoSofSei_("Período (fim)", fim));
+  form.appendChild(duas2);
+  form.appendChild(campoSofSei_("DEA", dea));
+
+  // Fontes: fonte, objeto e os 12 meses (o PDF pode ter vindo com algum mês cortado).
+  const fontes = (s.fontes || []).map(f => {
+    const bloco = elementoConferencia_("div", "fonte");
+    const fonte = selectSofSei_(FONTES_SOF_SEI_, f.fonte, "Fonte?");
+    const obj = inputSofSei_(f.objeto, "text", "listaObjetosSofSei");
+    const duas = elementoConferencia_("div", "duas fonte-obj");
+    duas.append(campoSofSei_("Fonte", fonte), campoSofSei_("Objeto da fonte", obj));
+    bloco.appendChild(duas);
+    const porMes = {};
+    (f.cronograma || []).forEach(c => { porMes[c.mes] = c.valor; });
+    const meses = elementoConferencia_("div", "meses");
+    const campos = MESES_SOF_SEI_.map((nome, i) => {
+      const caixa = document.createElement("div");
+      const rot = elementoConferencia_("label", "", nome);
+      const entrada = inputSofSei_(porMes[i + 1] ? Number(porMes[i + 1]).toLocaleString("pt-BR", { minimumFractionDigits: 2 }) : "");
+      caixa.append(rot, entrada);
+      meses.appendChild(caixa);
+      return entrada;
+    });
+    const total = elementoConferencia_("div", "total");
+    const somar = () => { total.textContent = "Total: " + dinheiroSofSei_(campos.reduce((t, c) => t + lerDinheiroSofSei_(c.value), 0)); };
+    campos.forEach(c => c.addEventListener("input", somar));
+    somar();
+    bloco.append(meses, total);
+    form.appendChild(bloco);
+    return { fonte, obj, campos, original: f };
+  });
+  if (!fontes.length) form.appendChild(elementoConferencia_("p", "nota", "Nenhuma fonte foi lida do documento."));
+
+  // O resto do documento, só para conferir.
+  const c = r.lida.campos || {};
+  const resumo = [
+    ["Credor", c.sei_credor], ["CNPJ", c.sei_credor_cnpj], ["Ação", c.sei_acao], ["Subação", c.sei_subacao],
+    ["Grupo de despesa", c.sei_grupo_despesa], ["Contrato", c.contrato], ["Tema POAS", c.sei_tema_poas],
+    ["Solicito", c.sei_tipo_solicitacao], ["Pleito", c.sei_tipo_pleito], ["Solicitante", c.sei_solicitante_nome],
+    ["Ordenador", c.sei_ordenador_nome], ["Data", c.sei_data]
+  ].filter(par => par[1]);
+  const detalhes = document.createElement("details");
+  detalhes.appendChild(elementoConferencia_("summary", "", "Outros dados lidos (" + (Object.keys(c).length) + " campos)"));
+  const dl = document.createElement("dl");
+  resumo.forEach(([rot, valor]) => { dl.append(elementoConferencia_("dt", "", rot), elementoConferencia_("dd", "", valor)); });
+  if (c.sei_objeto_despesa) dl.append(elementoConferencia_("dt", "", "Objeto da despesa"), elementoConferencia_("dd", "", c.sei_objeto_despesa));
+  detalhes.appendChild(dl);
+  form.appendChild(detalhes);
+
+  const resultado = elementoConferencia_("div", "resultado");
+  const botoes = elementoConferencia_("div", "botoes");
+  const gravar = elementoConferencia_("button", "anexar");
+  gravar.type = "button";
+  const cancelar = elementoConferencia_("button", "secundario", "Cancelar");
+  cancelar.type = "button";
+  cancelar.addEventListener("click", () => { form.remove(); item.formSof = null; });
+  const rotular = () => {
+    gravar.textContent = destino.value ? "Completar SOF no app" : "Criar SOF no app";
+    notaCompletar.hidden = !destino.value;
+  };
+  destino.addEventListener("change", rotular);
+  rotular();
+  botoes.append(gravar, cancelar);
+  form.append(botoes, resultado);
+
+  gravar.addEventListener("click", async () => {
+    const dados = {
+      campos: c, unidade_id: unidade.value, tipo: tipo.value, objeto: objeto.value.trim(), dea: dea.value,
+      periodo_inicio: inicio.value, periodo_fim: fim.value, sof_numero: numero.value.trim(), observacao: s.observacao || "",
+      fontes: fontes.map(f => ({
+        fonte: f.fonte.value, objeto: f.obj.value.trim(), codigo_poas: f.original.codigo_poas || "",
+        cronograma: f.campos.map((campo, i) => ({ mes: i + 1, valor: lerDinheiroSofSei_(campo.value) })).filter(m => m.valor > 0)
+      }))
+    };
+    dados.fontes.forEach(f => {
+      const contagem = {};
+      f.cronograma.forEach(m => { contagem[m.valor] = (contagem[m.valor] || 0) + 1; });
+      f.parcela_mensal = Number(Object.keys(contagem).sort((a, b) => contagem[b] - contagem[a] || b - a)[0] || 0);
+    });
+    if (!destino.value) {
+      const falta = !dados.unidade_id ? "a unidade" : !dados.tipo ? "o tipo de SOF" : !dados.objeto ? "o objeto da SOF"
+        : dados.fontes.some(f => !f.fonte || !f.objeto || !f.cronograma.length) ? "fonte, objeto e meses de cada fonte" : "";
+      if (falta) { resultado.className = "resultado erro"; resultado.textContent = "Falta " + falta + "."; return; }
+    }
+    gravar.disabled = true;
+    cancelar.disabled = true;
+    resultado.className = "resultado";
+    resultado.textContent = "Gravando no app…";
+    try {
+      const arvore = estadoReciboSei_.arvore;
+      const feito = await pedirAoAppGaocg_("importarSofSei", {
+        numero_processo: arvore.numeroProcesso, protocolo: protocoloDoNomeSei_(item.nome), id_documento_sei: item.id,
+        alvo_id: destino.value, dados: dados
+      });
+      const detalhe = feito.criada ? "SOF criada no app" : feito.preenchidos.length ? "Preenchido: " + feito.preenchidos.join(", ") : "Nada a preencher: a SOF já estava completa";
+      item.registro = { fluxoSof: true, situacao: "importada", final: true, sof: { id: feito.sof_id, descricao: feito.descricao + " — " + detalhe } };
+      item.formSof = null;
+      pintarCartaoReciboSei_();
+      tentarNesDepoisDaSof_();
+    } catch (erro) {
+      resultado.className = "resultado erro";
+      resultado.textContent = String(erro && erro.message ? erro.message : erro);
+      gravar.disabled = false;
+      cancelar.disabled = false;
+    }
+  });
+  item.formSof = form;
+  li.querySelector(".texto").appendChild(form);
+}
+
+/** Com a SOF no app, as NEs que ficaram pendentes por falta dela são tentadas de novo. */
+function tentarNesDepoisDaSof_() {
+  const e = estadoReciboSei_;
+  if (!e.arvore) return;
+  e.itens.forEach(item => {
+    if (item.fluxo === "ne" && !(item.registro && item.registro.final)) {
+      e.tentados.delete(e.arvore.idProcesso + ":" + item.id);
+      item.registro = null;
+    }
+  });
+  if (!e.execucao) sincronizarReciboSei_(e.arvore);
+}
+
 function montarCartaoReciboSei_(doc, arvore) {
   const hospedeiro = doc.createElement("div");
   hospedeiro.id = ID_CARTAO_RECIBO_SEI_;
   const raiz = hospedeiro.attachShadow({ mode: "open" });
   raiz.innerHTML = `
-    <style>${ESTILO_CARTAO_RECIBO_SEI_}</style>
+    <style>${ESTILO_CARTAO_RECIBO_SEI_}${ESTILO_SOF_SEI_}</style>
     <section class="cartao" aria-label="Documentos do SEI para o app GAOCG">
       <header class="cabecalho">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m9 14 2 2 4-4"/></svg>
@@ -4087,7 +4438,10 @@ function montarCartaoReciboSei_(doc, arvore) {
   estadoReciboSei_.chave = chave;
   estadoReciboSei_.itens = arvore.documentos.map(d => {
     const antes = anteriores.find(a => a.id === d.id);
-    return { id: d.id, nome: d.nome, url: d.url, fluxo: d.fluxo, registro: antes ? antes.registro : null, erro: antes ? antes.erro : "", lendo: false };
+    return {
+      id: d.id, nome: d.nome, url: d.url, fluxo: d.fluxo, conteudo: d.conteudo, registro: antes ? antes.registro : null,
+      erro: antes ? antes.erro : "", lendo: false, formSof: antes ? antes.formSof : null
+    };
   });
   pintarCartaoReciboSei_();
   sincronizarReciboSei_(arvore);
@@ -4117,7 +4471,7 @@ function garantirCartaoReciboSei_() {
   if (!arvore) return;
   const unidadeNe = siglaUnidadeSei_() === SIGLA_UNIDADE_NE_;
   arvore.documentos = arvore.documentos
-    .map(d => Object.assign(d, { fluxo: fluxoDoDocumentoSei_(d.nome, unidadeNe) }))
+    .map(d => Object.assign(d, { fluxo: fluxoDoDocumentoSei_(d.nome, unidadeNe, d.conteudo) }))
     .filter(d => d.fluxo);
   if (arvore.documentos.length) montarCartaoReciboSei_(doc, arvore);
 }

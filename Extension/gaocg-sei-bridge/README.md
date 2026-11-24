@@ -163,6 +163,22 @@ Detalhes:
 - v0.63.3: o download do app vai em 3 chamadas simultâneas, de custo parecido (15 documentos
   numa chamada só levaram 20 s, porque o app lê um arquivo por vez).
 
+## SOF pronta no SEI para o app (v0.67.0)
+
+Com o SEI na unidade SES-GAOCG, a SOF que está na árvore ("SES - SOF - Solicitação Orçamentária e
+Financeira 153", documento interno ou PDF) aparece no cartão "Do SEI para o app". O app lê o documento
+(`lerSofSei`, só leitura) e o botão "Conferir e criar no app" mostra unidade, tipo, objeto, período, DEA e
+as fontes com os 12 meses, todos editáveis, além dos avisos (ex.: soma dos meses diferente do total).
+Nada é gravado sem o clique em "Criar SOF no app" (`importarSofSei`). Se a SOF já existir no app (mesmo
+número no mesmo processo), o botão vira "Completar": só entram os campos vazios dela. Depois disso as NEs
+do processo são tentadas de novo e entram na SOF.
+
+- A unidade sai do CNPJ do credor; o tipo, da seção de Ação da unidade com a mesma Ação/Subação.
+- O objeto de cada fonte é sugerido pelo texto (Rateio, Piso, Sazonalidade) ou "CONTRATO DE GESTÃO (TES/SUS)".
+- No PDF do SEI a última coluna do cronograma pode vir cortada: o mês que falta é a diferença para o total
+  citado no texto, com aviso.
+- Backend: `sof-sei-leitura.ts` (leitura, testável com `node teste/sof-sei.mjs <arquivo>`) e `sof-sei.ts`.
+
 ## Configuração por ambiente
 
 | Onde | O quê | Quando mexer |

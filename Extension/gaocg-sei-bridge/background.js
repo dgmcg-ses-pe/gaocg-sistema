@@ -348,11 +348,11 @@ const CHAVE_SESSAO_GAOCG_ = "sessaoGaocg";
 // Acompanhamento Especial (AcompanhamentoSei.gs). A segunda grava, mas é idempotente por processo do SEI.
 // listarNesMaeEfisco/anexarObEfiscoRecibo (2026-11-19): OBs do E-fisco das NEs mãe do app (ObEfisco.gs). Só o
 // background chama (verificação periódica e página obs-efisco.html); a segunda grava, idempotente pelo número da OB.
-const ACOES_DOCUMENTOS_GAOCG_ = ["listarDocumentosProcesso", "baixarDocumentoProcesso", "baixarDocumentosProcesso", "documentosSeiProcessados", "anexarDocumentoSeiRecibo", "documentosSeiNeProcessados", "anexarNeSeiSof", "preverReciboAcompanhamentoSei", "criarReciboAcompanhamentoSei", "listarNesMaeEfisco", "anexarObEfiscoRecibo",
+const ACOES_DOCUMENTOS_GAOCG_ = ["listarDocumentosProcesso", "baixarDocumentoProcesso", "baixarDocumentosProcesso", "documentosSeiProcessados", "anexarDocumentoSeiRecibo", "documentosSeiNeProcessados", "anexarNeSeiSof", "lerSofSei", "importarSofSei", "preverReciboAcompanhamentoSei", "criarReciboAcompanhamentoSei", "listarNesMaeEfisco", "anexarObEfiscoRecibo",
   "enviarDocumentoBase", "excluirDocumentoBase", "substituirDocumentoBase", "criarPastaBase", "salvarOrdemDocumentos", "renomearDocumentoBase"];
 // Gerenciar a base de documentos pelo card (2026-11-24). Estas gravam e NÃO são idempotentes: sem repetição
 // automática, para um envio que demorou não virar dois arquivos no Drive.
-const ACOES_SEM_REPETIR_GAOCG_ = ["enviarDocumentoBase", "excluirDocumentoBase", "substituirDocumentoBase", "criarPastaBase"];
+const ACOES_SEM_REPETIR_GAOCG_ = ["enviarDocumentoBase", "excluirDocumentoBase", "substituirDocumentoBase", "criarPastaBase", "importarSofSei"];
 const ESPERAS_API_GAOCG_MS_ = [800, 2500];
 
 async function guardarSessaoGaocg_(token) {
