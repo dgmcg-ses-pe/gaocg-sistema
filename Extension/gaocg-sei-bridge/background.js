@@ -337,7 +337,7 @@ async function consultarNumeroSofCapturado_(numeroProcesso) {
  * em storage.session: some ao fechar o navegador e, por padrão, não é visível para content
  * scripts - a página do SEI pede a ação daqui e só recebe o resultado.
  */
-const URL_API_GAOCG_ = "https://script.google.com/macros/s/AKfycbzbLozyF4h0HLbCeJdWyj1skAmxgrUhjV17FvKzXKVqF9l3gIAnS6ufmvj-PvjAOv4ZTg/exec";
+const URL_API_GAOCG_ = "https://fszbykarwastqaadpwmd.supabase.co/functions/v1/api";
 const CHAVE_SESSAO_GAOCG_ = "sessaoGaocg";
 // documentosSeiProcessados/anexarDocumentoSeiRecibo (2026-11-11): LE/OB do processo anexadas
 // sozinhas no Recibo (ReciboSei.gs). A segunda grava, mas é idempotente por documento do SEI

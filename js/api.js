@@ -10,7 +10,7 @@
 
 const Api = (function () {
   // Preenchido após o deploy do Apps Script (Implantar > Nova implantação > Aplicativo da Web).
-  const API_URL = 'https://script.google.com/macros/s/AKfycbzbLozyF4h0HLbCeJdWyj1skAmxgrUhjV17FvKzXKVqF9l3gIAnS6ufmvj-PvjAOv4ZTg/exec';
+  const API_URL = 'https://fszbykarwastqaadpwmd.supabase.co/functions/v1/api';
 
   let token = null;
   const cache = new Map();
