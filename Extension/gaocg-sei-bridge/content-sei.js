@@ -4667,7 +4667,39 @@ function linkAtribuicaoDaArvore_(docArvore) {
   return null;
 }
 
-async function lerAtribuicaoDoSei_(link) {
+/**
+ * Atribuições do "Processo aberto nas unidades" da árvore: [{ sigla: "SES - RPAG_GAOCG", login: "fonden.neto" }].
+ * A tela "Atribuir Processo" do SEI abre sempre com a lista em branco, mesmo com o processo atribuído
+ * (2026-11-25): por isso o cartão dizia "Processo sem atribuição" e, depois de gravar, "O SEI não confirmou".
+ */
+function atribuidosNaArvore_(html) {
+  const texto = String(html || "").replace(/\\(["'/])/g, "$1").replace(/\\u00ed/gi, "í").replace(/&iacute;/gi, "í");
+  const re = />\s*([^<>]+?)\s*<\/a>\s*\(atribu[ií]do para\s*<a[^>]*>\s*([^<]+?)\s*<\/a>\s*\)/gi;
+  const achados = [];
+  let m;
+  while ((m = re.exec(texto))) achados.push({ sigla: m[1].replace(/\s+/g, " ").trim(), login: m[2].trim() });
+  return achados;
+}
+
+/** Sigla da unidade em que o SEI está ("SES - RPAG_GAOCG"), do topo da página. */
+function siglaUnidadeAtualSei_() {
+  const link = document.getElementById("lnkInfraUnidade");
+  if (link && link.textContent.trim()) return link.textContent.replace(/\s+/g, " ").trim();
+  const sel = document.getElementById("selInfraUnidades");
+  const opcao = sel && sel.options[sel.selectedIndex];
+  return opcao ? opcao.textContent.replace(/\s+/g, " ").trim() : "";
+}
+
+/** Quem está atribuído na unidade atual, lendo a árvore de novo (vale também para conferir depois de gravar). */
+async function atribuidoNaUnidadeAtual_(urlArvore) {
+  if (!urlArvore) return null;
+  const sigla = siglaUnidadeAtualSei_().toUpperCase();
+  const achados = atribuidosNaArvore_((await pedirSei_(urlArvore)).texto);
+  const daUnidade = achados.find(a => sigla && a.sigla.toUpperCase() === sigla);
+  return daUnidade ? daUnidade.login : null;
+}
+
+async function lerAtribuicaoDoSei_(link, urlArvore) {
   const pagina = await pedirSei_(link);
   const selects = Array.from(pagina.doc.querySelectorAll("select"));
   const select = selects.find(s => /atribui/i.test((s.id || "") + " " + (s.name || ""))) || (selects.length === 1 ? selects[0] : null);
@@ -4678,7 +4710,13 @@ async function lerAtribuicaoDoSei_(link) {
     valor: o.value, rotulo: o.textContent.replace(/\s+/g, " ").trim(), selecionado: o.hasAttribute("selected")
   }));
   const validas = todas.filter(o => o.valor && o.valor !== "null" && o.valor !== "0");
-  return { pagina: pagina, form: form, select: select, opcoes: validas, atual: validas.find(o => o.selecionado) || null };
+  let atual = validas.find(o => o.selecionado) || null;
+  const login = await atribuidoNaUnidadeAtual_(urlArvore);
+  if (login) {
+    const alvo = login.toLowerCase();
+    atual = validas.find(o => o.rotulo.toLowerCase().split(" - ")[0].trim() === alvo) || { valor: "", rotulo: login };
+  }
+  return { pagina: pagina, form: form, select: select, opcoes: validas, atual: atual };
 }
 
 async function gravarAtribuicaoNoSei_(lido, valor) {
@@ -4718,7 +4756,7 @@ async function carregarCartaoAtribuir_(aviso) {
   corpo.appendChild(elementoConferencia_("div", "aviso", "Lendo a atribuição no SEI…"));
   let lido;
   try {
-    lido = await lerAtribuicaoDoSei_(e.link);
+    lido = await lerAtribuicaoDoSei_(e.link, e.urlArvore);
   } catch (erro) {
     e.lendo = false;
     corpo.textContent = "";
@@ -4768,7 +4806,7 @@ async function carregarCartaoAtribuir_(aviso) {
     resultado.hidden = true;
     try {
       const resposta = await gravarAtribuicaoNoSei_(lido, escolhido.valor);
-      const conferido = await lerAtribuicaoDoSei_(e.link);
+      const conferido = await lerAtribuicaoDoSei_(e.link, e.urlArvore);
       if (!conferido.atual || conferido.atual.valor !== escolhido.valor) {
         throw new Error(mensagemDeErroSei_(resposta.texto) || "O SEI não confirmou a atribuição. Confira na tela Atribuir Processo.");
       }
@@ -4824,6 +4862,7 @@ function montarCartaoAtribuir_(doc, link) {
 
   estadoAtribuir_.raiz = raiz;
   estadoAtribuir_.link = link;
+  try { estadoAtribuir_.urlArvore = doc.location.href; } catch (e) { estadoAtribuir_.urlArvore = ""; }
   estadoAtribuir_.lendo = false;
   carregarCartaoAtribuir_();
 }
