@@ -9,7 +9,7 @@
  *
  * Pré-requisitos (se algum faltar, o usuário recebe uma mensagem dizendo qual):
  *   1. Chrome/Edge com a extensão instalada em modo desenvolvedor;
- *   2. o ID da extensão configurado aqui (ver ID_PADRAO_/idExtensao abaixo);
+ *   2. o ID da extensão configurado aqui (ver ID_PADRAO_/ID_LOJA_ abaixo);
  *   3. uma aba aberta em sei.pe.gov.br com o processo carregado.
  */
 
@@ -34,12 +34,27 @@ const SeiBridge = (function () {
    *     localStorage.setItem('gaocg_sei_extension_id', 'novo-id-aqui');
    */
   const ID_PADRAO_ = 'gmhefdeokoolgcpfohhkomgljndffnpi';
+  /**
+   * ID da mesma extensão publicada na Chrome Web Store (2026-11-25). A loja não
+   * aceita o "key" do manifest, então a versão instalada por lá tem outro ID.
+   * O app tenta os dois: quem instalou pela pasta (zip) e quem instalou pela
+   * loja continuam funcionando, e o primeiro ID que responder fica memorizado.
+   */
+  const ID_LOJA_ = 'jpnlbheeohpelghadckfnlbpeekdobhg';
   const CHAVE_ID_LOCAL_ = 'gaocg_sei_extension_id';
+  let idQueRespondeu_ = '';
 
-  function idExtensao() {
+  /** IDs a tentar, em ordem: o do localStorage, o último que respondeu, o da loja e o fixo da pasta. */
+  function idsExtensao_() {
     let salvo = '';
-    try { salvo = localStorage.getItem(CHAVE_ID_LOCAL_) || ''; } catch (e) { salvo = ''; }
-    return (salvo || ID_PADRAO_).trim();
+    try { salvo = (localStorage.getItem(CHAVE_ID_LOCAL_) || '').trim(); } catch (e) { salvo = ''; }
+    return [salvo, idQueRespondeu_, ID_LOJA_, ID_PADRAO_]
+      .filter((id, i, lista) => id && lista.indexOf(id) === i);
+  }
+
+  /** "Extensão não instalada com este ID": aí vale tentar o próximo ID. */
+  function erroDeIdAusente_(mensagem) {
+    return /Receiving end does not exist|Could not establish connection|Invalid extension id/i.test(mensagem || '');
   }
 
   function extensaoDisponivel() {
@@ -52,11 +67,14 @@ const SeiBridge = (function () {
    */
   function compartilharSessao(token) {
     if (!extensaoDisponivel()) return;
-    try {
-      chrome.runtime.sendMessage(idExtensao(), { type: 'SESSAO_GAOCG', token: token || null }, () => {
-        void chrome.runtime.lastError; // sem isso o Chrome loga "Unchecked runtime.lastError"
-      });
-    } catch (e) { /* extensão indisponível */ }
+    // Vai para todos os IDs: a pessoa pode ter a versão da pasta, a da loja ou as duas.
+    idsExtensao_().forEach((id) => {
+      try {
+        chrome.runtime.sendMessage(id, { type: 'SESSAO_GAOCG', token: token || null }, () => {
+          void chrome.runtime.lastError; // sem isso o Chrome loga "Unchecked runtime.lastError"
+        });
+      } catch (e) { /* extensão indisponível com este ID */ }
+    });
   }
 
   /**
@@ -67,6 +85,7 @@ const SeiBridge = (function () {
    * simplesmente nunca é chamado.
    */
   function enviarMensagem_(mensagem, timeoutMs) {
+    const ids = idsExtensao_();
     return new Promise((resolve, reject) => {
       let concluido = false;
       const temporizador = setTimeout(() => {
@@ -75,27 +94,38 @@ const SeiBridge = (function () {
         reject(new Error('A extensão não respondeu. Verifique se ela está instalada e ativa em chrome://extensions.'));
       }, timeoutMs || 30000);
 
-      try {
-        chrome.runtime.sendMessage(idExtensao(), mensagem, (resposta) => {
-          if (concluido) return;
-          concluido = true;
-          clearTimeout(temporizador);
-          const erro = chrome.runtime.lastError;
-          if (erro) {
-            reject(new Error(
-              'Não foi possível falar com a extensão GAOCG Conecta (' + erro.message + '). ' +
-              'Confira se ela está instalada e se o ID configurado está correto.'
-            ));
-            return;
-          }
-          resolve(resposta || {});
-        });
-      } catch (e) {
+      const falhar = (erro) => {
         if (concluido) return;
         concluido = true;
         clearTimeout(temporizador);
-        reject(e);
-      }
+        reject(erro);
+      };
+
+      // Tenta um ID por vez; "não instalada com este ID" passa para o próximo.
+      const tentar = (i) => {
+        try {
+          chrome.runtime.sendMessage(ids[i], mensagem, (resposta) => {
+            if (concluido) return;
+            const erro = chrome.runtime.lastError;
+            if (erro) {
+              if (erroDeIdAusente_(erro.message) && i + 1 < ids.length) { tentar(i + 1); return; }
+              falhar(new Error(
+                'Não foi possível falar com a extensão GAOCG Conecta (' + erro.message + '). ' +
+                'Confira se ela está instalada e ativa em chrome://extensions.'
+              ));
+              return;
+            }
+            concluido = true;
+            clearTimeout(temporizador);
+            idQueRespondeu_ = ids[i];
+            resolve(resposta || {});
+          });
+        } catch (e) {
+          if (erroDeIdAusente_(e && e.message) && i + 1 < ids.length) { tentar(i + 1); return; }
+          falhar(e);
+        }
+      };
+      tentar(0);
     });
   }
 
