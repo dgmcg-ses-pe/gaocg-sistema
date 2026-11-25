@@ -4427,16 +4427,28 @@ function abrirConferenciaSofSei_(item, li) {
 }
 
 /** Com a SOF no app, as NEs que ficaram pendentes por falta dela são tentadas de novo. */
-function tentarNesDepoisDaSof_() {
+async function tentarNesDepoisDaSof_() {
   const e = estadoReciboSei_;
-  if (!e.arvore) return;
+  const arvore = e.arvore;
+  if (!arvore) return;
+  // NEs que saíram do app (excluídas, ou presas a uma SOF excluída) voltam junto com a SOF recriada pelo
+  // cartão (2026-11-25): as mães antes dos reforços. Fora daqui, "Anexar de novo" continua manual.
+  const removidas = e.itens
+    .filter(i => i.fluxo === "ne" && i.registro && i.registro.resultado === "removido")
+    .sort((a, b) => (a.registro.tipo === "reforco") - (b.registro.tipo === "reforco"));
   e.itens.forEach(item => {
     if (item.fluxo === "ne" && !(item.registro && item.registro.final)) {
-      e.tentados.delete(e.arvore.idProcesso + ":" + item.id);
+      e.tentados.delete(arvore.idProcesso + ":" + item.id);
       item.registro = null;
     }
   });
-  if (!e.execucao) sincronizarReciboSei_(e.arvore);
+  e.execucao = null; // a conferência em andamento para no próximo documento
+  for (const item of removidas) {
+    if (e.arvore !== arvore) return;
+    await esperarFilaDeAnexos_();
+    await processarItemReciboSei_(item, arvore, { reanexar: true });
+  }
+  if (e.arvore === arvore) sincronizarReciboSei_(arvore);
 }
 
 function montarCartaoReciboSei_(doc, arvore) {
