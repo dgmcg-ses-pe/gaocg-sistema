@@ -3688,7 +3688,7 @@ const REGEX_NOME_NE_ = /\d{4}\s*NE\s*\d{6}|nota\s+de\s+empenho/i;
 const SIGLA_UNIDADE_NE_ = "SES-GAOCG";
 // SOF pronta na árvore (2026-11-24), também só na SES-GAOCG: "SES - SOF - Solicitação Orçamentária e Financeira 157".
 const REGEX_NOME_SOF_ = /\bSOF\b|Solicita[çc][ãa]o\s+Or[çc]ament[áa]ria/i;
-const estadoReciboSei_ = { raiz: null, chave: "", execucao: null, arvore: null, interrompido: false, itens: [], semSof: false, tentados: new Set() };
+const estadoReciboSei_ = { raiz: null, chave: "", execucao: null, arvore: null, interrompido: false, itens: [], semSof: false, tentados: new Set(), reconferir: null };
 
 /** Sigla da unidade em que o usuário está logado no SEI (topo da tela), sem espaços: "SES-GAOCG". */
 function siglaUnidadeSei_() {
@@ -3887,6 +3887,7 @@ const ESTILO_CARTAO_RECIBO_SEI_ = ESTILO_CARTAO_ACOMPANHAMENTO_ + `
   .situacao { font-size: 11.5px; margin-top: 1px; overflow-wrap: anywhere; }
   .pendente .situacao { color: #8a4b00; }
   .reanexar { margin-top: 5px; font-size: 11.5px; padding: 3px 9px; }
+  .parcelas { display: flex; gap: 6px; flex-wrap: wrap; }
   .anel { width: 16px; height: 16px; transform: rotate(-90deg); stroke-width: 2.6; }
   .anel .fundo { stroke: #c9dbea; }
   .anel .valor { stroke: #1c5a8a; transition: stroke-dashoffset .3s ease; }
@@ -3972,6 +3973,8 @@ function situacaoItemReciboSei_(item) {
   if (item.erro) return { classe: "pendente", marca: "!", texto: item.erro };
   const r = item.registro;
   if (item.lendo) return { classe: "lendo", progresso: true };
+  // Processo ainda sem recibo (LE/OB) ou sem SOF (NE) no app: espera, e a conferência volta sozinha.
+  if (item.bloqueio && !(r && r.final)) return { classe: "lendo", marca: "…", texto: item.bloqueio };
   if (!r) return { classe: "lendo", marca: "…", texto: "Na fila" };
   if (item.fluxo === "sof") return situacaoItemSofSei_(item);
   if (item.fluxo === "ne") return situacaoItemNeSei_(r);
@@ -3982,6 +3985,10 @@ function situacaoItemReciboSei_(item) {
   if (r.resultado === "anexado") return { classe: "ok", marca: "✓", texto: "Anexada no recibo " + onde + "." + nota };
   if (r.resultado === "ja_estava") return { classe: "ok", marca: "✓", texto: "Já estava no recibo " + onde + "." };
   if (r.resultado === "ignorado") return { classe: "ignorado", marca: "–", texto: r.motivo || "Não é LE nem OB." };
+  // Sem 70%/30% na observação da LE/OB (2026-11-25): o usuário escolhe a parcela aqui no cartão.
+  if (r.resultado === "escolher_parcela") {
+    return { classe: "pendente", marca: "?", texto: r.motivo || "Escolha a parcela.", parcelas: [70, 30] };
+  }
   // Conferido no app a cada abertura do processo (2026-11-11): apagada do recibo no app.
   // Não reanexa sozinha - a remoção pode ter sido de propósito -, só oferece o botão.
   if (r.resultado === "removido") {
@@ -4009,6 +4016,14 @@ async function reanexarItemReciboSei_(item) {
   const arvore = estadoReciboSei_.arvore;
   if (!arvore || item.lendo) return;
   await processarItemReciboSei_(item, arvore, { reanexar: true });
+}
+
+/** Botões "Parcela de 70%" / "Parcela de 30%": baixa o PDF de novo e anexa na parcela escolhida. */
+async function escolherParcelaItemSei_(item, pct) {
+  const arvore = estadoReciboSei_.arvore;
+  if (!arvore || item.lendo) return;
+  await esperarFilaDeAnexos_();
+  await processarItemReciboSei_(item, arvore, { percentual_escolhido: pct });
 }
 
 function pintarCartaoReciboSei_(aviso, ehErro) {
@@ -4063,6 +4078,19 @@ function pintarCartaoReciboSei_(aviso, ehErro) {
       // A árvore e as NEs repintam o cartão: o formulário aberto volta com o que já foi digitado.
       if (item.formSof) texto.appendChild(item.formSof);
     }
+    if (s.parcelas) {
+      const linha = document.createElement("div");
+      linha.className = "parcelas";
+      for (const pct of s.parcelas) {
+        const botao = document.createElement("button");
+        botao.type = "button";
+        botao.className = "secundario reanexar";
+        botao.textContent = "Parcela de " + pct + "%";
+        botao.addEventListener("click", () => escolherParcelaItemSei_(item, pct));
+        linha.appendChild(botao);
+      }
+      texto.appendChild(linha);
+    }
     if (s.reanexar) {
       const botao = document.createElement("button");
       botao.type = "button";
@@ -4081,19 +4109,40 @@ function pintarCartaoReciboSei_(aviso, ehErro) {
  * Cada chamada vira a execução da vez (e.execucao): a anterior para no próximo documento.
  * Acontece quando a árvore recarrega (novo cartão) ou quando o botão do painel é religado.
  */
-async function sincronizarReciboSei_(arvore) {
+async function sincronizarReciboSei_(arvore, silencioso) {
   const e = estadoReciboSei_;
   const execucao = {};
   e.execucao = execucao;
   e.arvore = arvore;
   e.interrompido = false;
+  clearTimeout(e.reconferir);
   const vigente = () => e.execucao === execucao;
   try {
-    pintarCartaoReciboSei_("Conferindo com o app GAOCG…");
-    const temRecibo = e.itens.some(i => i.fluxo === "recibo");
-    const temNe = e.itens.some(i => i.fluxo === "ne");
+    if (!silencioso) pintarCartaoReciboSei_("Conferindo com o app GAOCG…");
+    let temRecibo = e.itens.some(i => i.fluxo === "recibo");
+    let temNe = e.itens.some(i => i.fluxo === "ne");
     let vistos = [];
+    let bloqueado = false;
     try {
+      // Primeiro o processo (2026-11-25, pedido do usuário): LE/OB só são conferidas e anexadas se o
+      // processo já está em algum recibo do app, e NE/reforço só depois de saber quais SOFs ele tem.
+      // Enquanto não estiver, os documentos esperam e a conferência volta sozinha a cada minuto.
+      if (temRecibo || temNe) {
+        const noApp = await pedirAoAppGaocg_("processoSeiNoApp", { numero_processo: arvore.numeroProcesso }) || {};
+        if (!vigente()) return;
+        const semRecibo = temRecibo && !noApp.recibos;
+        const semSof = temNe && !(noApp.sofs || []).length;
+        e.itens.forEach(item => {
+          item.bloqueio = item.fluxo === "recibo" && semRecibo
+            ? "Aguardando: este processo ainda não está em nenhum recibo do app. A conferência começa sozinha quando estiver."
+            : item.fluxo === "ne" && semSof
+              ? "Aguardando: nenhuma SOF deste processo no app. A conferência começa sozinha quando a SOF for cadastrada."
+              : "";
+        });
+        bloqueado = semRecibo || semSof;
+        if (semRecibo) temRecibo = false;
+        if (semSof) { temNe = false; e.semSof = true; }
+      }
       if (temRecibo) vistos = vistos.concat(await pedirAoAppGaocg_("documentosSeiProcessados", { numero_processo: arvore.numeroProcesso }) || []);
       if (temNe) {
         const ne = await pedirAoAppGaocg_("documentosSeiNeProcessados", { numero_processo: arvore.numeroProcesso }) || {};
@@ -4110,9 +4159,15 @@ async function sincronizarReciboSei_(arvore) {
     // Um resultado final já conhecido nesta página vale mesmo que a lista do app venha atrasada.
     e.itens.forEach(item => {
       if (item.fluxo === "sof") return; // a leitura da SOF não fica registrada no app: vale a desta página
+      if (item.bloqueio) return;
       item.registro = porId[item.id] || (item.registro && item.registro.final ? item.registro : null);
     });
     pintarCartaoReciboSei_();
+    if (bloqueado) {
+      e.reconferir = setTimeout(() => {
+        if (e.arvore === arvore && !e.execucao && reciboSeiAtivo_) sincronizarReciboSei_(arvore, true);
+      }, 60000);
+    }
 
     // Lentidão ao anexar (2026-11-23): a árvore recarrega depois de cada anexo e esta conferência
     // recomeçava, baixando de novo do SEI toda LE/OB pendente - e cada download segura o SEI
@@ -4126,6 +4181,9 @@ async function sincronizarReciboSei_(arvore) {
       if (!vigente()) return;
       if (!reciboSeiAtivo_) { e.interrompido = true; return; }
       if (item.registro && item.registro.final) continue;
+      if (item.bloqueio) continue;
+      // Esperando o usuário escolher a parcela (70%/30%): tentar de novo daria a mesma pergunta.
+      if (item.registro && item.registro.resultado === "escolher_parcela") continue;
       if (e.tentados.has(chaveTentativa(item))) continue;
       await esperarFilaDeAnexos_();
       if (!vigente()) return;
