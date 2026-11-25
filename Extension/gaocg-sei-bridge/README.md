@@ -182,6 +182,19 @@ do processo são tentadas de novo e entram na SOF.
   continuam só das pastas abertas.
 - Backend: `sof-sei-leitura.ts` (leitura, testável com `node teste/sof-sei.mjs <arquivo>`) e `sof-sei.ts`.
 
+## Cartões renomeados, recarregar e Atribuir Processo (v0.68.0)
+
+- "Recibo no app" virou "Cadastrar Recibo no APP". A competência sai do texto do acompanhamento também
+  quando o mês vem por extenso e só com espaço antes do ano ("SETEMBRO 26"); antes só valia "SETEMBRO/26".
+  A regra fica no backend (`competenciasDoTextoAcompanhamento_`, `extensao.ts`).
+- "GAOCG · Do SEI para o app" virou "Criar SOF no APP / Anexar documentos no APP" e ganhou o botão ↻:
+  pede a árvore de novo ao SEI (sem recarregar a página), relê as pastas e confere de novo SOF, NE, LE e OB,
+  inclusive o que já tinha sido tentado nesta abertura.
+- Cartão novo "Atribuir Processo" (liga/desliga no painel): usa a tela "Atribuir Processo" do SEI
+  (`procedimento_atribuicao_cadastrar`, link dos scripts da árvore). A lista é a do SEI, com os usuários
+  da unidade ativa. Só grava com o clique em "Atribuir" e lê a tela de novo para confirmar.
+  Ainda não validado num SEI real.
+
 ## Configuração por ambiente
 
 | Onde | O quê | Quando mexer |

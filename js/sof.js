@@ -1808,7 +1808,35 @@ const TelaSof = (function () {
    * viram 1 linha só, com os meses cobertos e o valor total, 1 único link
    * "Ver arquivo" e 1 único botão de excluir (exclui todos os meses juntos).
    */
-  function linhasNotasEmpenhoHtml_(notas) {
+  /**
+   * Período da NE mãe (pedido do usuário, 2026-11-25): a NE original não
+   * guarda período. Ele sai do cronograma da fonte+objeto da SOF - os meses
+   * com valor, em ordem, somados até cobrir o valor da NE (1 centavo de
+   * folga por mês, padrão das SOFs). Ex.: NE de 10 parcelas numa SOF de 12
+   * meses mostra "Jan a Out".
+   */
+  function periodoNeMae_(n, sof) {
+    if (n.periodo) return n.periodo;
+    const fonte = ((sof && sof.fontes) || []).find(f => f.fonte === n.fonte && f.objeto === n.objeto)
+      || ((sof && sof.fontes) || []).find(f => f.objeto === n.objeto);
+    const meses = ((fonte && fonte.cronograma) || [])
+      .filter(c => Number(c.valor) > 0).sort((a, b) => a.mes - b.mes);
+    const alvo = Number(n.valor) || 0;
+    if (!meses.length || !alvo) return '-';
+    const cobertos = [];
+    let soma = 0;
+    for (const c of meses) {
+      cobertos.push(Number(c.mes));
+      soma += Number(c.valor);
+      if (soma >= alvo - 0.01 * cobertos.length) break;
+    }
+    const nomes = cobertos.map(m => NOMES_MESES_ABREV_FONTE_[m - 1]);
+    const seguido = cobertos.every((m, i) => i === 0 || m === cobertos[i - 1] + 1);
+    if (nomes.length === 1) return nomes[0];
+    return seguido ? nomes[0] + ' a ' + nomes[nomes.length - 1] : nomes.join('/');
+  }
+
+  function linhasNotasEmpenhoHtml_(notas, sof) {
     if (!notas.length) return '<tr><td colspan="8" class="estado-vazio">Nenhuma NE vinculada ainda.</td></tr>';
     const naoReforco = notas.filter(n => n.tipo !== 'reforco');
     const porNumeroNe = {};
@@ -1819,7 +1847,7 @@ const TelaSof = (function () {
     const linhasOriginais = naoReforco.map(n => `
       <tr data-id="${n.id}">
         <td>${n.tipo}</td><td>${UI.escaparHtml(n.numero_ne || '-')}</td><td>${UI.escaparHtml(n.fonte || '-')}</td>
-        <td>${UI.escaparHtml(n.objeto || '-')}</td><td>${UI.formatarMoeda(n.valor)}</td><td>${UI.escaparHtml(n.periodo || '-')}</td>
+        <td>${UI.escaparHtml(n.objeto || '-')}</td><td>${UI.formatarMoeda(n.valor)}</td><td>${UI.escaparHtml(n.tipo === 'original' ? periodoNeMae_(n, sof) : (n.periodo || '-'))}</td>
         <td>${n.arquivo_url ? `<a href="${UI.escaparHtml(n.arquivo_url)}" target="_blank" rel="noopener" class="botao">Ver arquivo</a>` : '-'}</td>
         <td><button type="button" class="botao-icone excluir" data-acao="excluir-ne" data-id="${n.id}" title="Excluir">${ICONE_LIXEIRA}</button></td>
       </tr>`);
@@ -1828,7 +1856,7 @@ const TelaSof = (function () {
       const primeira = porNumeroNe[numeroNe][0];
       return agruparReforcosPorNumeroSof_(porNumeroNe[numeroNe]).map(g => `
         <tr data-ids="${g.ids.join(',')}">
-          <td>reforco</td><td>${UI.escaparHtml(numeroNe || '-')}</td><td>${UI.escaparHtml(primeira.fonte || '-')}</td>
+          <td>reforco</td><td>${UI.escaparHtml(g.numero_ne_reforco || numeroNe || '-')}</td><td>${UI.escaparHtml(primeira.fonte || '-')}</td>
           <td>${UI.escaparHtml(primeira.objeto || '-')}</td><td>${UI.formatarMoeda(g.valor_total)}</td>
           <td>${g.meses.length ? g.meses.map(m => NOMES_MESES_ABREV_FONTE_[m - 1]).join('/') : '-'}</td>
           <td>${g.arquivo_url ? `<a href="${UI.escaparHtml(g.arquivo_url)}" target="_blank" rel="noopener" class="botao">Ver arquivo</a>` : '-'}</td>
@@ -1860,7 +1888,7 @@ const TelaSof = (function () {
       <h4 style="margin:0 0 8px">Notas de Empenho (total: ${UI.formatarMoeda(total)})</h4>
       <table class="tabela">
         <thead><tr><th>Tipo</th><th>Número</th><th>Fonte</th><th>Objeto</th><th>Valor Atendido</th><th>Período</th><th>Arquivo</th><th></th></tr></thead>
-        <tbody>${linhasNotasEmpenhoHtml_(notas)}</tbody>
+        <tbody>${linhasNotasEmpenhoHtml_(notas, sof)}</tbody>
       </table>
       <p class="ajuda">Preencha abaixo pra anexar uma nova Nota de Empenho a este SOF - ela só é salva quando você clicar em "Salvar" (rodapé desta tela). Deixe em branco se não quiser adicionar nenhuma agora. Em Reforço, anexe o documento primeiro - os meses reforçados e os valores são identificados automaticamente.</p>
       <div class="grade-3">

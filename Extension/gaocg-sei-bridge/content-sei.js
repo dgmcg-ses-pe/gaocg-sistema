@@ -3436,10 +3436,10 @@ function montarCartaoReciboApp_(doc, depoisDe) {
   const raiz = hospedeiro.attachShadow({ mode: "open" });
   raiz.innerHTML = `
     <style>${ESTILO_CARTAO_ACOMPANHAMENTO_}</style>
-    <section class="cartao cartao-recibo" aria-label="Recibo no app">
+    <section class="cartao cartao-recibo" aria-label="Cadastrar Recibo no APP">
       <header class="cabecalho">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h12v20l-3-2-3 2-3-2-3 2z"/><path d="M9 7h6M9 11h6M9 15h4"/></svg>
-        <span class="titulo">Recibo no app</span>
+        <span class="titulo">Cadastrar Recibo no APP</span>
         <button type="button" class="icone seta" title="Minimizar" aria-label="Minimizar">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>
         </button>
@@ -3715,7 +3715,46 @@ function fluxoDoDocumentoSei_(nome, unidadeNe, conteudo) {
 }
 
 function textoDosScriptsDaArvore_(doc) {
+  if (arvoreRelida_ && arvoreRelida_.doc === doc) return arvoreRelida_.texto;
   return Array.from(doc.querySelectorAll("script")).map(s => s.textContent || "").join("\n");
+}
+
+/*
+ * Botão de recarregar do cartão (pedido do usuário, 2026-11-25): relê a árvore do processo no SEI
+ * (sem recarregar a página) e confere de novo SOF, NE, LE e OB, inclusive o que já tinha sido
+ * tentado nesta abertura. A árvore é pedida de novo ao SEI; se a resposta não trouxer o processo,
+ * vale a árvore que está na tela.
+ */
+let arvoreRelida_ = null;
+
+async function recarregarCartaoReciboSei_(doc) {
+  const e = estadoReciboSei_;
+  const botao = e.raiz && e.raiz.querySelector(".recarregar");
+  if (botao) botao.disabled = true;
+  e.execucao = null;
+  pintarCartaoReciboSei_("Relendo a árvore do processo…");
+  let texto = "";
+  try {
+    const resposta = await fetch(doc.location.href, { credentials: "same-origin", cache: "no-store" });
+    if (resposta.ok) {
+      const charset = (/charset=([\w-]+)/i.exec(resposta.headers.get("content-type") || "") || [])[1] || "iso-8859-1";
+      texto = new TextDecoder(charset).decode(await resposta.arrayBuffer());
+    }
+  } catch (erro) { texto = ""; }
+  arvoreRelida_ = /new infraArvoreNo\("PROCESSO"/.test(texto) ? { doc: doc, texto: texto } : null;
+  if (e.arvore) {
+    const prefixo = e.arvore.idProcesso + ":";
+    Array.from(e.tentados).forEach(k => { if (k.indexOf(prefixo) === 0) e.tentados.delete(k); });
+  }
+  // Recomeça do zero: o que o app já registrou volta na conferência (documentosSei*Processados).
+  e.chave = "";
+  e.itens = [];
+  pastasDaArvoreLidas_.delete(doc);
+  if (leituraPastasEmAndamento_ === doc) leituraPastasEmAndamento_ = null;
+  const hospedeiro = doc.getElementById(ID_CARTAO_RECIBO_SEI_);
+  if (hospedeiro) hospedeiro.remove();
+  e.raiz = null;
+  garantirCartaoReciboSei_();
 }
 
 /** Processo e documentos externos (PDF) carregados na árvore. */
@@ -4460,7 +4499,10 @@ function montarCartaoReciboSei_(doc, arvore) {
     <section class="cartao" aria-label="Documentos do SEI para o app GAOCG">
       <header class="cabecalho">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m9 14 2 2 4-4"/></svg>
-        <span class="titulo">GAOCG · Do SEI para o app</span>
+        <span class="titulo">Criar SOF no APP / Anexar documentos no APP</span>
+        <button type="button" class="icone recarregar" title="Conferir de novo SOF, NE, LE e OB" aria-label="Conferir de novo SOF, NE, LE e OB">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+        </button>
         <button type="button" class="icone seta" title="Minimizar" aria-label="Minimizar">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>
         </button>
@@ -4482,6 +4524,7 @@ function montarCartaoReciboSei_(doc, arvore) {
     aplicarMinimizado(minimizado);
     guardarCartaoMinimizado_(CHAVE_RECIBO_SEI_MINIMIZADO_, minimizado);
   });
+  raiz.querySelector(".recarregar").addEventListener("click", () => recarregarCartaoReciboSei_(doc));
 
   const referencia = doc.getElementById(ID_CARTAO_RECIBO_APP_) || doc.getElementById(ID_CARTAO_ACOMPANHAMENTO_) || doc.getElementById(ID_CARTAO_ANOTACAO_) || pontoDosCartoes_(doc);
   if (referencia && referencia.parentNode) referencia.parentNode.insertBefore(hospedeiro, referencia.nextSibling);
@@ -4545,6 +4588,203 @@ function garantirCartaoReciboSei_() {
 }
 let leituraPastasEmAndamento_ = null;
 
+/* ================= Atribuir Processo (pedido do usuário, 2026-11-25) =================
+ *
+ * Cartão para atribuir o processo a um usuário da unidade em que o SEI está. A lista e a
+ * gravação são as da própria tela "Atribuir Processo" do SEI (acao=procedimento_atribuicao_
+ * cadastrar, link achado nos scripts da árvore, como o do acompanhamento): o SEI só lista
+ * quem está cadastrado na sigla ativa. Nada é gravado sem o clique em "Atribuir"; depois a
+ * tela é lida de novo para confirmar que a atribuição ficou.
+ */
+const ID_CARTAO_ATRIBUIR_ = "gaocgCartaoAtribuir";
+const CHAVE_ATRIBUIR_MINIMIZADO_ = "gaocgAtribuirMinimizado";
+const estadoAtribuir_ = { raiz: null, link: "", lendo: false };
+
+function linkAtribuicaoDaArvore_(docArvore) {
+  for (const script of Array.from(docArvore.querySelectorAll("script:not([src])"))) {
+    const texto = (script.textContent || "").replace(/\\(["'/])/g, "$1");
+    const achado = /controlador\.php\?acao=procedimento_atribuicao_cadastrar[^"'\\\s<>]*/.exec(texto);
+    if (achado) return new URL(achado[0].replace(/&amp;/g, "&"), docArvore.baseURI).href;
+  }
+  return null;
+}
+
+async function lerAtribuicaoDoSei_(link) {
+  const pagina = await pedirSei_(link);
+  const selects = Array.from(pagina.doc.querySelectorAll("select"));
+  const select = selects.find(s => /atribui/i.test((s.id || "") + " " + (s.name || ""))) || (selects.length === 1 ? selects[0] : null);
+  if (!select || !select.name) throw new Error("Não achei a lista de usuários na tela Atribuir Processo do SEI.");
+  const form = select.form || pagina.doc.querySelector("form");
+  if (!form) throw new Error("Não achei o formulário da tela Atribuir Processo do SEI.");
+  const todas = Array.from(select.options).map(o => ({
+    valor: o.value, rotulo: o.textContent.replace(/\s+/g, " ").trim(), selecionado: o.hasAttribute("selected")
+  }));
+  const validas = todas.filter(o => o.valor && o.valor !== "null" && o.valor !== "0");
+  return { pagina: pagina, form: form, select: select, opcoes: validas, atual: validas.find(o => o.selecionado) || null };
+}
+
+async function gravarAtribuicaoNoSei_(lido, valor) {
+  const corpo = new URLSearchParams();
+  Array.from(lido.form.elements).forEach(el => {
+    if (!el.name || el.disabled || el === lido.select) return;
+    const tipo = String(el.type || "").toLowerCase();
+    if (["submit", "button", "image", "reset", "file"].indexOf(tipo) !== -1) return;
+    if ((tipo === "checkbox" || tipo === "radio") && !el.checked) return;
+    if (el.tagName === "SELECT" && el.multiple) { Array.from(el.options).filter(o => o.selected).forEach(o => corpo.append(el.name, o.value)); return; }
+    corpo.append(el.name, el.value);
+  });
+  corpo.set(lido.select.name, valor);
+  const salvar = Array.from(lido.form.querySelectorAll("button[name], input[type=submit][name]"))
+    .find(b => /salvar|atribuir|confirmar/i.test((b.value || "") + " " + (b.textContent || "") + " " + b.name));
+  if (salvar) corpo.set(salvar.name, salvar.value || "Salvar");
+  const acao = new URL(lido.form.getAttribute("action") || lido.pagina.url, lido.pagina.url).href;
+  const resposta = await pedirSei_(acao, {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: corpo.toString()
+  });
+  return resposta;
+}
+
+/** Mensagem de erro que o SEI devolve num alert() da página, se houver. */
+function mensagemDeErroSei_(texto) {
+  const m = /alert\(\s*(['"])((?:\\.|(?!\1).)+)\1\s*\)/.exec(String(texto || ""));
+  return m ? m[2].replace(/\\n/g, " ").replace(/\\(.)/g, "$1").trim() : "";
+}
+
+async function carregarCartaoAtribuir_(aviso) {
+  const e = estadoAtribuir_;
+  const raiz = e.raiz;
+  if (!raiz || e.lendo) return;
+  const corpo = raiz.querySelector(".corpo");
+  e.lendo = true;
+  corpo.textContent = "";
+  corpo.appendChild(elementoConferencia_("div", "aviso", "Lendo a atribuição no SEI…"));
+  let lido;
+  try {
+    lido = await lerAtribuicaoDoSei_(e.link);
+  } catch (erro) {
+    e.lendo = false;
+    corpo.textContent = "";
+    const el = elementoConferencia_("div", "aviso erro", textoDoErro_(erro));
+    const repetir = elementoConferencia_("button", "", "Tentar de novo");
+    repetir.type = "button";
+    repetir.addEventListener("click", () => carregarCartaoAtribuir_());
+    el.appendChild(repetir);
+    corpo.appendChild(el);
+    return;
+  }
+  e.lendo = false;
+  if (e.raiz !== raiz) return;
+  corpo.textContent = "";
+  if (aviso) corpo.appendChild(aviso);
+  corpo.appendChild(elementoConferencia_("div", "detalhe",
+    lido.atual ? "Atribuído a: " + lido.atual.rotulo : "Processo sem atribuição."));
+  if (!lido.opcoes.length) {
+    corpo.appendChild(elementoConferencia_("div", "aviso", "O SEI não listou nenhum usuário nesta unidade."));
+    return;
+  }
+  const lista = elementoConferencia_("select", "escolha");
+  lista.setAttribute("aria-label", "Analista");
+  const vazio = elementoConferencia_("option", "", "Escolha o analista…");
+  vazio.value = "";
+  lista.appendChild(vazio);
+  for (const o of lido.opcoes) {
+    const item = elementoConferencia_("option", "", o.rotulo);
+    item.value = o.valor;
+    lista.appendChild(item);
+  }
+  lista.style.marginTop = "8px";
+  const botao = elementoConferencia_("button", "anexar", "Atribuir");
+  botao.type = "button";
+  botao.disabled = true;
+  lista.addEventListener("change", () => {
+    botao.disabled = !lista.value || !!(lido.atual && lido.atual.valor === lista.value);
+  });
+  const resultado = elementoConferencia_("div", "aviso");
+  resultado.hidden = true;
+  botao.addEventListener("click", async () => {
+    const escolhido = lido.opcoes.find(o => o.valor === lista.value);
+    if (!escolhido) return;
+    botao.disabled = true;
+    lista.disabled = true;
+    botao.textContent = "Atribuindo…";
+    resultado.hidden = true;
+    try {
+      const resposta = await gravarAtribuicaoNoSei_(lido, escolhido.valor);
+      const conferido = await lerAtribuicaoDoSei_(e.link);
+      if (!conferido.atual || conferido.atual.valor !== escolhido.valor) {
+        throw new Error(mensagemDeErroSei_(resposta.texto) || "O SEI não confirmou a atribuição. Confira na tela Atribuir Processo.");
+      }
+      carregarCartaoAtribuir_(elementoConferencia_("div", "ok", "Processo atribuído a " + escolhido.rotulo + "."));
+    } catch (erro) {
+      botao.textContent = "Atribuir";
+      botao.disabled = false;
+      lista.disabled = false;
+      resultado.className = "alerta";
+      resultado.textContent = textoDoErro_(erro);
+      resultado.hidden = false;
+    }
+  });
+  corpo.append(lista, botao, resultado);
+}
+
+function montarCartaoAtribuir_(doc, link) {
+  const hospedeiro = doc.createElement("div");
+  hospedeiro.id = ID_CARTAO_ATRIBUIR_;
+  const raiz = hospedeiro.attachShadow({ mode: "open" });
+  raiz.innerHTML = `
+    <style>${ESTILO_CARTAO_ACOMPANHAMENTO_}</style>
+    <section class="cartao" aria-label="Atribuir Processo">
+      <header class="cabecalho">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6"/><path d="M19 8v6M16 11h6"/></svg>
+        <span class="titulo">Atribuir Processo</span>
+        <button type="button" class="icone seta" title="Minimizar" aria-label="Minimizar">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>
+        </button>
+      </header>
+      <div class="corpo" role="status"></div>
+    </section>
+  `;
+  const cartao = raiz.querySelector(".cartao");
+  const seta = raiz.querySelector(".seta");
+  const aplicarMinimizado = minimizado => {
+    cartao.classList.toggle("minimizado", minimizado);
+    const rotulo = minimizado ? "Expandir" : "Minimizar";
+    seta.title = rotulo;
+    seta.setAttribute("aria-label", rotulo);
+  };
+  aplicarMinimizado(cartaoMinimizado_(CHAVE_ATRIBUIR_MINIMIZADO_));
+  seta.addEventListener("click", () => {
+    const minimizado = !cartao.classList.contains("minimizado");
+    aplicarMinimizado(minimizado);
+    guardarCartaoMinimizado_(CHAVE_ATRIBUIR_MINIMIZADO_, minimizado);
+  });
+
+  // Logo abaixo da anotação (ou de "Consultar Andamento").
+  const referencia = doc.getElementById(ID_CARTAO_ANOTACAO_) || pontoDosCartoes_(doc);
+  if (referencia && referencia.parentNode) referencia.parentNode.insertBefore(hospedeiro, referencia.nextSibling);
+  else doc.body.appendChild(hospedeiro);
+
+  estadoAtribuir_.raiz = raiz;
+  estadoAtribuir_.link = link;
+  estadoAtribuir_.lendo = false;
+  carregarCartaoAtribuir_();
+}
+
+function garantirCartaoAtribuir_() {
+  const area = acharAreaArvore_();
+  let doc = null;
+  try { doc = area && (area.contentDocument || area.ownerDocument); } catch (e) { doc = null; }
+  if (!doc || !doc.body || doc.readyState === "loading") return;
+  const existente = doc.getElementById(ID_CARTAO_ATRIBUIR_);
+  if (existente) {
+    existente.style.display = atribuirSeiAtivo_ ? "" : "none";
+    return;
+  }
+  if (!atribuirSeiAtivo_) return;
+  const link = linkAtribuicaoDaArvore_(doc);
+  if (link) montarCartaoAtribuir_(doc, link);
+}
+
 /* ============ liga/desliga das janelas de anexo e anotação (popup) ============
  *
  * 2026-10-15, pedido do usuário: o painel da extensão (popup.html/popup.js) tem
@@ -4565,6 +4805,9 @@ const CHAVE_ANOTACAO_SEI_ = "anotacaoSeiAtiva";
 const CHAVE_ACOMPANHAMENTO_SEI_ = "acompanhamentoSeiAtivo";
 // LE/OB do processo anexadas sozinhas no Recibo do app (2026-11-11). Ausente = ativo.
 const CHAVE_RECIBO_SEI_ = "reciboSeiAtivo";
+// Cartão "Atribuir Processo" (2026-11-25). Ausente = ativo.
+const CHAVE_ATRIBUIR_SEI_ = "atribuirSeiAtivo";
+let atribuirSeiAtivo_ = true;
 let ferramentasSeiAtivas_ = true;
 let anotacaoSeiAtiva_ = true;
 let acompanhamentoSeiAtivo_ = true;
@@ -4575,6 +4818,7 @@ function lerPreferenciasFerramentas_(dados) {
   anotacaoSeiAtiva_ = (CHAVE_ANOTACAO_SEI_ in dados) ? dados[CHAVE_ANOTACAO_SEI_] !== false : ferramentasSeiAtivas_;
   acompanhamentoSeiAtivo_ = dados[CHAVE_ACOMPANHAMENTO_SEI_] !== false;
   reciboSeiAtivo_ = dados[CHAVE_RECIBO_SEI_] !== false;
+  atribuirSeiAtivo_ = dados[CHAVE_ATRIBUIR_SEI_] !== false;
   configAnexo_ = {
     tipoDocumento: String(dados[CHAVE_ANEXO_TIPO_] || "").trim() || "Anexo",
     nivelAcesso: (dados[CHAVE_ANEXO_NIVEL_] in MAPA_NIVEL_ACESSO) ? dados[CHAVE_ANEXO_NIVEL_] : "publico",
@@ -4584,7 +4828,7 @@ function lerPreferenciasFerramentas_(dados) {
 
 async function carregarPreferenciaFerramentas_() {
   try {
-    lerPreferenciasFerramentas_(await chrome.storage.local.get([CHAVE_FERRAMENTAS_SEI_, CHAVE_ANOTACAO_SEI_, CHAVE_ACOMPANHAMENTO_SEI_, CHAVE_RECIBO_SEI_, CHAVE_ANEXO_TIPO_, CHAVE_ANEXO_NIVEL_, CHAVE_ANEXO_TIPO_PELO_NOME_]));
+    lerPreferenciasFerramentas_(await chrome.storage.local.get([CHAVE_FERRAMENTAS_SEI_, CHAVE_ANOTACAO_SEI_, CHAVE_ACOMPANHAMENTO_SEI_, CHAVE_RECIBO_SEI_, CHAVE_ATRIBUIR_SEI_, CHAVE_ANEXO_TIPO_, CHAVE_ANEXO_NIVEL_, CHAVE_ANEXO_TIPO_PELO_NOME_]));
   } catch (e) { ferramentasSeiAtivas_ = true; anotacaoSeiAtiva_ = true; }
   return ferramentasSeiAtivas_;
 }
@@ -4592,6 +4836,7 @@ async function carregarPreferenciaFerramentas_() {
 function garantirCartoesDaArvore_() {
   garantirCartaoAnotacao_();
   garantirCartaoAcompanhamento_();
+  garantirCartaoAtribuir_();
   garantirCartaoReciboSei_();
 }
 
@@ -4698,7 +4943,7 @@ if (window.top === window) {
       iniciarVigilancia_();
     }
     // Botão do painel da extensão: vale na hora para esta aba.
-    if (area === "local" && (mudancas[CHAVE_FERRAMENTAS_SEI_] || mudancas[CHAVE_ANOTACAO_SEI_] || mudancas[CHAVE_ACOMPANHAMENTO_SEI_] || mudancas[CHAVE_RECIBO_SEI_] || mudancas[CHAVE_ANEXO_TIPO_] || mudancas[CHAVE_ANEXO_NIVEL_] || mudancas[CHAVE_ANEXO_TIPO_PELO_NOME_])) {
+    if (area === "local" && (mudancas[CHAVE_FERRAMENTAS_SEI_] || mudancas[CHAVE_ANOTACAO_SEI_] || mudancas[CHAVE_ACOMPANHAMENTO_SEI_] || mudancas[CHAVE_RECIBO_SEI_] || mudancas[CHAVE_ATRIBUIR_SEI_] || mudancas[CHAVE_ANEXO_TIPO_] || mudancas[CHAVE_ANEXO_NIVEL_] || mudancas[CHAVE_ANEXO_TIPO_PELO_NOME_])) {
       // Relê as duas juntas: a anotação pode herdar a chave de anexos (migração).
       carregarPreferenciaFerramentas_().then(aplicarVisibilidadeFerramentas_);
     }
