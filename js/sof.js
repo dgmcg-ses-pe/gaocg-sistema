@@ -1035,7 +1035,7 @@ const TelaSof = (function () {
           if (!resposta.ok) {
             UI.toast(
               resposta.motivo === 'extensao_ausente'
-                ? 'Extensão GAOCG SEI Bridge não encontrada.'
+                ? 'Extensão GAOCG Conecta não encontrada.'
                 : 'Ainda não encontrei um número gerado pelo SEI para este processo - use "Salvar e enviar ao SEI", espere o editor abrir no SEI e tente de novo.',
               'aviso'
             );

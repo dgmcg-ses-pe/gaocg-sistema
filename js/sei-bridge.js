@@ -1,5 +1,5 @@
 /**
- * GAOCG App - Ponte com a extensão "GAOCG SEI Bridge" (Extension/gaocg-sei-bridge).
+ * GAOCG App - Ponte com a extensão "GAOCG Conecta" (Extension/gaocg-sei-bridge).
  *
  * Envia um documento gerado aqui (hoje: a SOF) para um processo JÁ ABERTO numa
  * aba do SEI, preenchendo o formulário nativo de "Incluir Documento". Não há
@@ -83,7 +83,7 @@ const SeiBridge = (function () {
           const erro = chrome.runtime.lastError;
           if (erro) {
             reject(new Error(
-              'Não foi possível falar com a extensão GAOCG SEI Bridge (' + erro.message + '). ' +
+              'Não foi possível falar com a extensão GAOCG Conecta (' + erro.message + '). ' +
               'Confira se ela está instalada e se o ID configurado está correto.'
             ));
             return;
@@ -207,7 +207,7 @@ const SeiBridge = (function () {
    */
   async function enviarSof(sof, htmlCompleto) {
     if (!extensaoDisponivel()) {
-      UI.toast('Extensão GAOCG SEI Bridge não encontrada. Instale-a no Chrome/Edge para enviar direto ao SEI.', 'erro');
+      UI.toast('Extensão GAOCG Conecta não encontrada. Instale-a no Chrome/Edge para enviar direto ao SEI.', 'erro');
       return false;
     }
     if (!sof.sei) {

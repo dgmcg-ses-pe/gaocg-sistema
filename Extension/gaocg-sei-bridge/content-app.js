@@ -1,5 +1,5 @@
 /**
- * GAOCG SEI Bridge - ponte para as páginas do app GAOCG (2026-11-11, pedido do usuário).
+ * GAOCG Conecta - ponte para as páginas do app GAOCG (2026-11-11, pedido do usuário).
  *
  * Quando a extensão anexa uma LE/OB num Recibo a partir do SEI (ReciboSei.gs), o
  * background.js avisa as abas do app abertas neste navegador por chrome.tabs.sendMessage.

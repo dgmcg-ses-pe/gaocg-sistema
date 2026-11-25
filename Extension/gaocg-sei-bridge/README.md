@@ -1,4 +1,4 @@
-# GAOCG SEI Bridge — extensão-ponte
+# GAOCG Conecta — extensão-ponte
 
 Extensão de navegador (Manifest V3) que recebe dados do app GAOCG e preenche
 o formulário nativo de inclusão de documento de um processo aberto no SEI.
@@ -236,3 +236,8 @@ desta extensão também.
 - Upload de arquivo (documento externo) em vez de HTML, para SOFs que já saem
   como PDF.
 - Guardar no `chrome.storage.local` o último processo SEI usado por SOF.
+
+## Novo nome e novo ícone (v0.68.1)
+
+A extensão passou a se chamar **GAOCG Conecta** e ganhou um ícone novo
+(documento com a letra G). A pasta continua `gaocg-sei-bridge` e o ID não muda.

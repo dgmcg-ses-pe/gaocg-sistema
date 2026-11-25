@@ -1,5 +1,5 @@
 /**
- * GAOCG SEI Bridge - leitor do E-fisco (documento offscreen, 2026-11-19).
+ * GAOCG Conecta - leitor do E-fisco (documento offscreen, 2026-11-19).
  *
  * O service worker não tem DOMParser, e as telas do E-fisco são formulários clássicos
  * (servlet, POST com ~160 campos), então quem conversa com o E-fisco é este documento

@@ -1,5 +1,5 @@
 /**
- * GAOCG SEI Bridge — content-sei.js
+ * GAOCG Conecta — content-sei.js
  *
  * Roda dentro do SEI (sei.pe.gov.br). Automatiza o DOM do formulário nativo de
  * inclusão de documento, sobre a sessão já autenticada do usuário. Não existe
@@ -958,13 +958,13 @@ async function vigiarEditorParaConteudoPendente_() {
   if (restante <= 0) return;
   // Logs de diagnóstico: sem eles, "não achei o editor" e "não havia nada a
   // colar" ficavam indistinguíveis no console (atualização do SEI, 2026-11).
-  console.log("[GAOCG SEI Bridge] " + (pendente.rotulo || "SOF") + " pendente - procurando o editor nesta página.");
+  console.log("[GAOCG Conecta] " + (pendente.rotulo || "SOF") + " pendente - procurando o editor nesta página.");
   const corpo = await aguardarCondicao_(() => corpoDoEditor_(), restante, 600);
   if (!corpo) {
-    console.log("[GAOCG SEI Bridge] editor não encontrado nesta página até o pendente expirar.");
+    console.log("[GAOCG Conecta] editor não encontrado nesta página até o pendente expirar.");
     return;
   }
-  console.log("[GAOCG SEI Bridge] editor encontrado:", corpo.className || corpo.tagName);
+  console.log("[GAOCG Conecta] editor encontrado:", corpo.className || corpo.tagName);
 
   // Substitui SEMPRE, sem perguntar (decisão do usuário, 2026-08-10).
   //
@@ -1172,7 +1172,7 @@ async function aplicarConteudo_(corpoInicial, pendente) {
     }
     await esperar_(1200);
     colou = conteudoConfere_(html);
-    console.log("[GAOCG SEI Bridge] tentativa " + tentativa + " via " + via + " - colou: " + colou);
+    console.log("[GAOCG Conecta] tentativa " + tentativa + " via " + via + " - colou: " + colou);
   }
 
   if (!colou) {

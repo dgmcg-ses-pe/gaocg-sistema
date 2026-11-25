@@ -1,5 +1,5 @@
 /**
- * GAOCG SEI Bridge — background.js
+ * GAOCG Conecta — background.js
  *
  * Recebe mensagens externas do app GAOCG (via chrome.runtime.sendMessage com o
  * ID desta extensão) e repassa para a aba do SEI que estiver com o processo
@@ -206,7 +206,7 @@ function aplicarViaCkeditor_(html) {
           status: editor.state
         };
       });
-      console.log("[GAOCG SEI Bridge] áreas CKEditor 5 nesta página:",
+      console.log("[GAOCG Conecta] áreas CKEditor 5 nesta página:",
         info.map(i => ({ raiz: i.raiz, readOnly: i.readOnly, altura: i.altura, status: i.status })));
 
       const prontas = info.filter(i => i.status === "ready" || i.status === undefined);
@@ -225,7 +225,7 @@ function aplicarViaCkeditor_(html) {
       } else {
         escolhida.editor.setData(html);
       }
-      console.log("[GAOCG SEI Bridge] conteúdo aplicado (CKEditor 5) na raiz:", escolhida.raiz || "main");
+      console.log("[GAOCG Conecta] conteúdo aplicado (CKEditor 5) na raiz:", escolhida.raiz || "main");
       return { ok: true, escolhida: escolhida.raiz || "main" };
     }
 
@@ -243,7 +243,7 @@ function aplicarViaCkeditor_(html) {
       } catch (e) { /* instância ainda montando */ }
       return { nome: nome, readOnly: !!instancia.readOnly, altura: altura, status: instancia.status };
     });
-    console.log("[GAOCG SEI Bridge] instâncias CKEditor nesta página:", info);
+    console.log("[GAOCG Conecta] instâncias CKEditor nesta página:", info);
     if (!info.length) return { ok: false, motivo: "nenhuma instância de CKEditor" };
 
     // Instância ainda montando ("loaded"/"unloaded") descarta o setData quando
@@ -262,7 +262,7 @@ function aplicarViaCkeditor_(html) {
       return { ok: false, motivo: "instância sem setData" };
     }
     instancia.setData(html);
-    console.log("[GAOCG SEI Bridge] conteúdo aplicado na instância:", escolhida.nome);
+    console.log("[GAOCG Conecta] conteúdo aplicado na instância:", escolhida.nome);
     return { ok: true, escolhida: escolhida.nome, candidatas: info };
   } catch (e) {
     return { ok: false, motivo: String(e && e.message ? e.message : e) };
@@ -618,7 +618,7 @@ async function atualizarSeloEfisco_() {
   try {
     await chrome.action.setBadgeBackgroundColor({ color: "#2f7d4a" });
     await chrome.action.setBadgeText({ text: n ? String(n) : "" });
-    await chrome.action.setTitle({ title: "GAOCG SEI Bridge" + (n ? " - " + n + " OB(s) nova(s) do E-fisco" : "") });
+    await chrome.action.setTitle({ title: "GAOCG Conecta" + (n ? " - " + n + " OB(s) nova(s) do E-fisco" : "") });
   } catch (e) { /* sem selo não impede nada */ }
 }
 

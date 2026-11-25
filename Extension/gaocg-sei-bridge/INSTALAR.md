@@ -1,4 +1,4 @@
-# Instalar o GAOCG SEI Bridge neste computador
+# Instalar o GAOCG Conecta neste computador
 
 Guia rápido - não precisa ler mais nada além disto pra instalar. É a
 extensão que deixa o app GAOCG enviar SOFs direto pra dentro de um processo
@@ -15,7 +15,7 @@ já aberto no SEI.
 4. Clique em **"Carregar sem compactação"** (ou "Load unpacked") e escolha a
    pasta que você copiou no passo 1 (a que tem o arquivo `manifest.json`
    dentro).
-5. A extensão aparece na lista com o nome "GAOCG SEI Bridge". Confira que o
+5. A extensão aparece na lista com o nome "GAOCG Conecta". Confira que o
    **ID** mostrado no card é:
    ```
    gmhefdeokoolgcpfohhkomgljndffnpi
