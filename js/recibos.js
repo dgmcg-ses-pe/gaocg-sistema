@@ -1197,6 +1197,126 @@ const TelaRecibos = (function () {
     return true;
   }
 
+  /* ============ Várias Notas de Liquidação por recibo (2026-11-25, pedido do usuário) ============
+   * Cada recibo (avulso ou parcela) tem uma lista de LEs, como as OBs da parcela. O Valor
+   * Liquidado é a soma da lista (somente leitura) e o backend guarda a 1ª LE nos campos antigos
+   * do recibo. Payload: notas_liquidacao = [{ numero_le, valor, arquivo_drive_id, arquivo_url,
+   * arquivoBase64?, arquivoNome?, arquivoTipo? }] - a lista inteira, a cada Salvar. */
+
+  /** Lista inicial de LEs de um recibo vindo do backend (notas_liquidacao, ou a LE única antiga). */
+  function notasLiquidacaoIniciais_(d) {
+    if (!d) return [];
+    if (Array.isArray(d.notas_liquidacao)) {
+      return d.notas_liquidacao.map(n => ({ numero_le: n.numero_le || '', valor: Number(n.valor) || 0, arquivo_drive_id: n.arquivo_drive_id || '', arquivo_url: n.arquivo_url || '' }));
+    }
+    if (d.nota_liquidacao_url || d.nota_liquidacao_numero) {
+      return [{ numero_le: d.nota_liquidacao_numero || '', valor: Number(d.valor_liquidado) || 0, arquivo_drive_id: d.nota_liquidacao_drive_id || '', arquivo_url: d.nota_liquidacao_url || '' }];
+    }
+    return [];
+  }
+
+  const somaNotasLiquidacao_ = itens => (itens || []).reduce((s, it) => s + (Number(it.valor) || 0), 0);
+
+  function payloadNotasLiquidacao_(itens) {
+    return (itens || []).map(it => ({
+      numero_le: it.numero_le || '', valor: it.valor, arquivo_drive_id: it.arquivo_drive_id || '', arquivo_url: it.arquivo_url || '',
+      arquivoBase64: it._base64, arquivoNome: it._nome, arquivoTipo: it._tipo
+    }));
+  }
+
+  /**
+   * Lê uma LE escolhida (OCR) e devolve o item da lista, ou null se recusada. `jaNaTela` = números de LE
+   * já anexados no processo; `somaAtual` = soma das LEs que o recibo já tem (a conferência do percentual
+   * olha a soma com esta nova).
+   */
+  async function lerLeParaLista_(arquivo, ctx, notaEmpenho, jaNaTela, somaAtual, percentual, prefixo) {
+    try {
+      if (arquivo.size > 8 * 1024 * 1024) throw new Error('Arquivo muito grande (máximo 8MB).');
+      const base64 = await UI.lerArquivoBase64(arquivo);
+      const resultado = await Api.chamar('lerAnexoRecibo', {
+        tipo: 'nota_liquidacao', arquivoBase64: base64, arquivoNome: arquivo.name, arquivoTipo: arquivo.type, notaEmpenhoEsperada: notaEmpenho,
+        competenciaEsperada: ctx.obterCompetencia()
+      });
+      if (resultado.numero_documento && jaNaTela.has(resultado.numero_documento)) {
+        UI.toast(prefixo + 'A Nota de Liquidação nº ' + resultado.numero_documento + ' já foi anexada a este processo.', 'erro');
+        return null;
+      }
+      const comSoma = Object.assign({}, resultado, { valor: (Number(somaAtual) || 0) + (Number(resultado.valor) || 0) });
+      if (!confirmarLeituraLe_(comSoma, ctx, percentual)) return null;
+      return { numero_le: resultado.numero_documento || '', valor: Number(resultado.valor) || 0, _base64: base64, _nome: arquivo.name, _tipo: arquivo.type };
+    } catch (err) {
+      UI.toast(prefixo + err.message, 'erro');
+      return null;
+    }
+  }
+
+  /** Lê vários arquivos de LE, um por vez, e chama aoAdicionar(item) para cada um aceito. */
+  async function adicionarLesDosArquivos_(arquivos, botao, ctx, obterJaNaTela, obterSoma, obterPercentual, aoAdicionar) {
+    if (!arquivos.length) return;
+    const notaEmpenho = (ctx.obterNotaEmpenho() || '').trim();
+    if (!notaEmpenho) { UI.toast('Selecione a Nota de Empenho antes de anexar este documento.', 'erro'); return; }
+    const varios = arquivos.length > 1;
+    const textoBotao = botao.textContent;
+    let anexadas = 0;
+    botao.disabled = true;
+    try {
+      for (let i = 0; i < arquivos.length; i++) {
+        if (varios) botao.textContent = `Lendo LE ${i + 1} de ${arquivos.length}…`;
+        const item = await lerLeParaLista_(arquivos[i], ctx, notaEmpenho, obterJaNaTela(), obterSoma(), obterPercentual(), varios ? arquivos[i].name + ': ' : '');
+        if (item) { aoAdicionar(item); anexadas++; }
+      }
+    } finally {
+      botao.disabled = false;
+      botao.textContent = textoBotao;
+    }
+    if (varios) UI.toast(`${anexadas} de ${arquivos.length} Notas de Liquidação adicionadas. Clique em Salvar para gravar.`, anexadas ? 'sucesso' : 'erro');
+  }
+
+  /**
+   * Lista de LEs do recibo avulso (novo e edição): tabela + "+ Adicionar LE" (aceita vários
+   * arquivos). Valor Liquidado = soma, somente leitura. Devolve { itens(), payload() }.
+   */
+  function ligarListaLesAvulso_({ listaEl, inputEl, botaoEl, valorInputEl, ctx, itens }) {
+    const estado = (itens || []).slice();
+    valorInputEl.readOnly = true;
+    function render() {
+      listaEl.innerHTML = estado.length ? `
+        <div class="tabela-reforcos-wrap">
+          <table class="tabela tabela-reforcos">
+            <thead><tr><th>LE</th><th>Valor</th><th>Arquivo</th><th></th></tr></thead>
+            <tbody>
+              ${estado.map((it, i) => `
+                <tr>
+                  <td>${it.numero_le ? UI.escaparHtml(it.numero_le) : '<span class="ajuda">-</span>'}</td>
+                  <td>${UI.formatarMoeda(it.valor)}</td>
+                  <td>${it.arquivo_url ? `<a href="${UI.escaparHtml(it.arquivo_url)}" target="_blank" rel="noopener" class="botao">Ver</a>` : (it._base64 ? '<span class="ajuda">novo</span>' : '<span class="ajuda">-</span>')}</td>
+                  <td><button type="button" class="botao-icone excluir" data-indice-le="${i}" title="Remover esta LE">${ICONE_LIXEIRA}</button></td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>` : '<p class="ajuda">Nenhuma Nota de Liquidação anexada.</p>';
+      listaEl.querySelectorAll('[data-indice-le]').forEach(botao => {
+        botao.addEventListener('click', () => {
+          if (!confirm('Apagar esta Nota de Liquidação?')) return;
+          estado.splice(Number(botao.dataset.indiceLe), 1);
+          render();
+        });
+      });
+      const soma = somaNotasLiquidacao_(estado);
+      valorInputEl.value = soma ? soma.toFixed(2) : '';
+    }
+    botaoEl.addEventListener('click', () => inputEl.click());
+    inputEl.addEventListener('change', async () => {
+      const arquivos = Array.from(inputEl.files || []);
+      inputEl.value = '';
+      await adicionarLesDosArquivos_(arquivos, botaoEl, ctx,
+        () => new Set(estado.map(it => it.numero_le).filter(Boolean)), () => somaNotasLiquidacao_(estado), () => 0,
+        item => { estado.push(item); render(); });
+    });
+    render();
+    return { itens: () => estado, payload: () => payloadNotasLiquidacao_(estado) };
+  }
+
   // ===================== NOVO RECIBO (com ou sem parcela dividida) =====================
 
   async function abrirFormularioNovo() {
@@ -1237,8 +1357,12 @@ const TelaRecibos = (function () {
         </div>
 
         <div id="blocoParcelaUnica" class="grade-2">
-          <div class="campo"><label>Valor Liquidado</label><input id="recValorLiquidado" type="text" inputmode="decimal" class="campo-moeda" readonly placeholder="Preenchido ao anexar a LE" /></div>
-          <div class="campo"><label>Nota de Liquidação (anexo)</label><input type="file" id="recNotaLiquidacaoArquivo" accept=".pdf,image/*" /></div>
+          <div class="campo"><label>Valor Liquidado (soma das LEs)</label><input id="recValorLiquidado" type="text" inputmode="decimal" class="campo-moeda" readonly placeholder="Preenchido ao anexar a LE" /></div>
+          <div class="campo"><label>Notas de Liquidação</label>
+            <div id="recLesLista"></div>
+            <input type="file" id="recNotaLiquidacaoArquivo" class="oculto" accept=".pdf,image/*" multiple />
+            <button type="button" class="botao" id="recAddLe">+ Adicionar LE</button>
+          </div>
           <div class="campo"><label>Valor Pago</label><input id="recValorPago" type="text" inputmode="decimal" class="campo-moeda" /></div>
           <div class="campo"><label>Ordem Bancária (anexo)</label><input type="file" id="recOrdemBancariaArquivo" accept=".pdf,image/*" /></div>
         </div>
@@ -1351,14 +1475,11 @@ const TelaRecibos = (function () {
       }
     });
     document.getElementById('btnCancelarRec').addEventListener('click', UI.fecharModal);
-    document.getElementById('btnSalvarRec').addEventListener('click', () => salvarReciboNovo(seletorNe));
-
-    ligarAnexoComOcr_({
-      inputEl: document.getElementById('recNotaLiquidacaoArquivo'), tipo: 'nota_liquidacao',
-      obterNotaEmpenho: obterNotaEmpenhoNovo_, valorInputEl: document.getElementById('recValorLiquidado'),
-      conferirLeitura: resultado => confirmarLeituraLe_(resultado, ctxNovo), valorSempreTravado: true,
-      obterCompetencia: ctxNovo.obterCompetencia
+    const listaLesNovo = ligarListaLesAvulso_({
+      listaEl: document.getElementById('recLesLista'), inputEl: document.getElementById('recNotaLiquidacaoArquivo'),
+      botaoEl: document.getElementById('recAddLe'), valorInputEl: document.getElementById('recValorLiquidado'), ctx: ctxNovo, itens: []
     });
+    document.getElementById('btnSalvarRec').addEventListener('click', () => salvarReciboNovo(seletorNe, listaLesNovo));
     ligarAnexoComOcr_({
       inputEl: document.getElementById('recOrdemBancariaArquivo'), tipo: 'ordem_bancaria',
       obterNotaEmpenho: obterNotaEmpenhoNovo_, valorInputEl: document.getElementById('recValorPago'),
@@ -1381,7 +1502,7 @@ const TelaRecibos = (function () {
     const numerosLe = new Set();
     document.querySelectorAll('#' + containerId + ' .linha-parcela-dividida').forEach(linha => {
       (linha._ordensBancarias || []).forEach(it => { if (it.numero_ob) numerosOb.add(it.numero_ob); });
-      if (linha._notaLiquidacao && linha._notaLiquidacao.numero) numerosLe.add(linha._notaLiquidacao.numero);
+      (linha._notasLiquidacao || []).forEach(it => { if (it.numero_le) numerosLe.add(it.numero_le); });
     });
     return { numerosOb, numerosLe };
   }
@@ -1434,13 +1555,13 @@ const TelaRecibos = (function () {
       <div class="linha-parcela-dividida-corpo">
         <div class="grade-3">
           <div class="campo"><label>Percentual (%)</label><input type="text" inputmode="decimal" class="pd-percentual campo-moeda" value="${valorPercentual}" ${percentualFixo ? 'readonly' : ''} /></div>
-          <div class="campo"><label>Valor Liquidado</label><input type="text" inputmode="decimal" class="pd-liquidado campo-moeda" value="${dadosExistentes && dadosExistentes.valor_liquidado ? dadosExistentes.valor_liquidado : ''}" readonly placeholder="Preenchido ao anexar a LE" /></div>
+          <div class="campo"><label>Valor Liquidado (soma das LEs)</label><input type="text" inputmode="decimal" class="pd-liquidado campo-moeda" value="${dadosExistentes && dadosExistentes.valor_liquidado ? dadosExistentes.valor_liquidado : ''}" readonly placeholder="Preenchido ao anexar a LE" /></div>
           <div class="campo"><label>Valor Pago (soma automática)</label><input type="text" inputmode="decimal" class="pd-pago campo-moeda" value="${dadosExistentes && dadosExistentes.valor_pago ? dadosExistentes.valor_pago : ''}" readonly /></div>
         </div>
         <div class="campo pd-ob-bloco">
-          <label>Documentos anexados (LE + Ordens Bancárias)</label>
+          <label>Documentos anexados (LEs + Ordens Bancárias)</label>
           <div class="pd-ob-tabela-wrap"></div>
-          <input type="file" class="pd-le-novo-anexo oculto" accept=".pdf,image/*" />
+          <input type="file" class="pd-le-novo-anexo oculto" accept=".pdf,image/*" multiple />
           <input type="file" class="pd-ob-novo-anexo oculto" accept=".pdf,image/*" multiple />
           <button type="button" class="botao pd-add-le">+ Adicionar LE</button>
           <button type="button" class="botao pd-add-ob">+ Adicionar OB</button>
@@ -1456,15 +1577,8 @@ const TelaRecibos = (function () {
     }
     atualizarBotoesRemoverParcelaDividida_(containerId);
 
-    // _notaLiquidacaoOriginalUrl (imutável, capturada aqui) diferencia "nunca
-    // existiu" de "já existia e foi removida agora" pra
-    // montarPayloadNotaLiquidacao_ saber quando mandar
-    // removerNotaLiquidacaoArquivo.
-    div._notaLiquidacaoOriginalUrl = (dadosExistentes && dadosExistentes.nota_liquidacao_url) || '';
-    div._notaLiquidacao = div._notaLiquidacaoOriginalUrl ? {
-      numero: (dadosExistentes && dadosExistentes.nota_liquidacao_numero) || '',
-      url: div._notaLiquidacaoOriginalUrl
-    } : null;
+    // Várias LEs por parcela (2026-11-25): a lista inteira vai a cada Salvar (montarPayloadNotaLiquidacao_).
+    div._notasLiquidacao = notasLiquidacaoIniciais_(dadosExistentes);
 
     div._ordensBancarias = ((dadosExistentes && dadosExistentes.ordens_bancarias) || []).map(it => ({
       numero_ob: it.numero_ob || '', valor: Number(it.valor) || 0,
@@ -1481,43 +1595,19 @@ const TelaRecibos = (function () {
         arquivo_drive_id: dadosExistentes.ordem_bancaria_arquivo_drive_id || '', arquivo_url: dadosExistentes.ordem_bancaria_arquivo_url
       });
     }
-    div.querySelector('.pd-liquidado').addEventListener('input', () => renderTabelaOrdensBancariasParcela_(div));
-
     const inputNovoLe = div.querySelector('.pd-le-novo-anexo');
-    div.querySelector('.pd-add-le').addEventListener('click', () => inputNovoLe.click());
+    const botaoAddLe = div.querySelector('.pd-add-le');
+    botaoAddLe.addEventListener('click', () => inputNovoLe.click());
+    // Várias LEs por parcela, e vários arquivos de uma vez (2026-11-25). Duplicidade olha TODAS as
+    // parcelas na tela (o backend confere o processo inteiro de novo ao salvar); a conferência do
+    // percentual olha a soma das LEs da parcela com a nova.
     inputNovoLe.addEventListener('change', async function () {
-      const arquivo = inputNovoLe.files[0];
-      if (!arquivo) return;
-      const notaEmpenho = (obterNotaEmpenho() || '').trim();
-      if (!notaEmpenho) { UI.toast('Selecione a Nota de Empenho antes de anexar este documento.', 'erro'); inputNovoLe.value = ''; return; }
-      try {
-        if (arquivo.size > 8 * 1024 * 1024) throw new Error('Arquivo muito grande (máximo 8MB).');
-        const base64 = await UI.lerArquivoBase64(arquivo);
-        const resultado = await Api.chamar('lerAnexoRecibo', {
-          tipo: 'nota_liquidacao', arquivoBase64: base64, arquivoNome: arquivo.name, arquivoTipo: arquivo.type, notaEmpenhoEsperada: notaEmpenho,
-          competenciaEsperada: ctx.obterCompetencia()
-        });
-        // Duplicidade (sessão 2026-08-13, pedido do usuário): aviso na hora,
-        // olhando TODAS as parcelas na tela (não só esta linha) - o backend
-        // confere o processo inteiro de novo no salvamento
-        // (documentoDuplicadoNoProcesso_, Recibos.gs), essa é só a versão rápida.
-        if (resultado.numero_documento && numerosDocumentosAnexadosNaTela_(containerId).numerosLe.has(resultado.numero_documento)) {
-          UI.toast('A Nota de Liquidação nº ' + resultado.numero_documento + ' já foi anexada a este processo.', 'erro');
-          return;
-        }
-        const percentualLinha = UI.parseValorBr(div.querySelector('.pd-percentual').value) || 0;
-        if (!confirmarLeituraLe_(resultado, ctx, percentualLinha)) return;
-        div._notaLiquidacao = {
-          numero: resultado.numero_documento || '',
-          _base64: base64, _nome: arquivo.name, _tipo: arquivo.type
-        };
-        div.querySelector('.pd-liquidado').value = resultado.valor;
-        renderTabelaOrdensBancariasParcela_(div);
-      } catch (err) {
-        UI.toast(err.message, 'erro');
-      } finally {
-        inputNovoLe.value = '';
-      }
+      const arquivos = Array.from(inputNovoLe.files || []);
+      inputNovoLe.value = '';
+      await adicionarLesDosArquivos_(arquivos, botaoAddLe, Object.assign({}, ctx, { obterNotaEmpenho }),
+        () => numerosDocumentosAnexadosNaTela_(containerId).numerosLe, () => somaNotasLiquidacao_(div._notasLiquidacao),
+        () => UI.parseValorBr(div.querySelector('.pd-percentual').value) || 0,
+        item => { div._notasLiquidacao.push(item); renderTabelaOrdensBancariasParcela_(div); });
     });
 
     const inputNovoOb = div.querySelector('.pd-ob-novo-anexo');
@@ -1576,32 +1666,31 @@ const TelaRecibos = (function () {
    * Tabela "Documentos anexados" (LE + Ordens Bancárias) da parcela de maior
    * percentual (PARCELA_DIVIDIDA_TES_PERCENTUAL_MULTI_OB) dentro de um
    * Recibo dividido de Contrato de Gestão (TES) - sessão 2026-08-06, estilo
-   * reaproveitado de "Reforços lançados" (Notas de Empenho). A linha da LE
-   * (sessão 2026-08-12: passou a ter "apagar" também, mesmo padrão das de
-   * OB - antes era fixa, sem botão) vem de `div._notaLiquidacao` (número/url;
-   * o valor continua lido ao vivo do campo "Valor Liquidado", que é o mesmo
-   * de sempre, só preenchido agora pelo botão "+Adicionar LE" em vez do
-   * <input type="file">); as de OB vêm de `div._ordensBancarias` (mutado por
+   * reaproveitado de "Reforços lançados" (Notas de Empenho). As linhas de LE
+   * vêm de `div._notasLiquidacao` (várias por parcela desde 2026-11-25; Valor
+   * Liquidado = soma delas) e as de OB de `div._ordensBancarias` (mutados por
    * quem chama). Também recalcula Valor Pago (soma automática) toda vez que roda.
    */
   function renderTabelaOrdensBancariasParcela_(div) {
     const itens = div._ordensBancarias || [];
-    const le = div._notaLiquidacao;
-    const valorLe = UI.parseValorBr(div.querySelector('.pd-liquidado').value) || 0;
+    const les = div._notasLiquidacao || [];
+    const somaLes = somaNotasLiquidacao_(les);
+    // Valor Liquidado = soma das LEs; parcela antiga com valor digitado e sem LE mantém o valor.
+    if (les.length || div._lesJaMexidas) div.querySelector('.pd-liquidado').value = somaLes ? somaLes.toFixed(2) : '';
     const alvo = div.querySelector('.pd-ob-tabela-wrap');
     alvo.innerHTML = `
       <div class="tabela-reforcos-wrap">
         <table class="tabela tabela-reforcos">
           <thead><tr><th>Documento</th><th>Número</th><th>Valor</th><th>Arquivo</th><th></th></tr></thead>
           <tbody>
-            ${le ? `
+            ${les.map((le, i) => `
             <tr>
               <td>LE</td>
-              <td>${le.numero ? UI.escaparHtml(le.numero) : '<span class="ajuda">-</span>'}</td>
-              <td>${UI.formatarMoeda(valorLe)}</td>
-              <td>${le.url ? `<a href="${UI.escaparHtml(le.url)}" target="_blank" rel="noopener" class="botao">Ver</a>` : '<span class="ajuda">-</span>'}</td>
-              <td><button type="button" class="botao-icone excluir" data-acao="remover-le" title="Remover esta LE">${ICONE_LIXEIRA}</button></td>
-            </tr>` : ''}
+              <td>${le.numero_le ? UI.escaparHtml(le.numero_le) : '<span class="ajuda">-</span>'}</td>
+              <td>${UI.formatarMoeda(le.valor)}</td>
+              <td>${le.arquivo_url ? `<a href="${UI.escaparHtml(le.arquivo_url)}" target="_blank" rel="noopener" class="botao">Ver</a>` : (le._base64 ? '<span class="ajuda">novo</span>' : '<span class="ajuda">-</span>')}</td>
+              <td><button type="button" class="botao-icone excluir" data-indice-le="${i}" title="Remover esta LE">${ICONE_LIXEIRA}</button></td>
+            </tr>`).join('')}
             ${itens.map((it, i) => `
               <tr>
                 <td>OB</td>
@@ -1613,19 +1702,20 @@ const TelaRecibos = (function () {
           </tbody>
         </table>
       </div>
-      ${(le || itens.length) ? '' : '<p class="ajuda">Nenhum documento anexado ainda.</p>'}`;
+      ${(les.length || itens.length) ? '' : '<p class="ajuda">Nenhum documento anexado ainda.</p>'}`;
     // Confirmação antes de apagar (sessão 2026-08-14, pedido do usuário) -
     // remove só do estado local aqui (instantâneo, sem chamada de rede) - a
     // remoção de verdade na planilha só acontece quando o analista clicar
     // "Salvar" (montarPayloadNotaLiquidacao_/montarPayloadOrdensBancarias_,
     // já existentes), o mesmo padrão "editar local, salvar em lote" já usado
     // em toda a tela - não é uma chamada nova por clique, então não pesa.
-    const botaoRemoverLe = alvo.querySelector('[data-acao="remover-le"]');
-    if (botaoRemoverLe) botaoRemoverLe.addEventListener('click', () => {
-      if (!confirm('Apagar esta Nota de Liquidação?')) return;
-      div._notaLiquidacao = null;
-      div.querySelector('.pd-liquidado').value = '';
-      renderTabelaOrdensBancariasParcela_(div);
+    alvo.querySelectorAll('[data-indice-le]').forEach(botao => {
+      botao.addEventListener('click', () => {
+        if (!confirm('Apagar esta Nota de Liquidação?')) return;
+        les.splice(Number(botao.dataset.indiceLe), 1);
+        div._lesJaMexidas = true;
+        renderTabelaOrdensBancariasParcela_(div);
+      });
     });
     alvo.querySelectorAll('[data-indice-ob]').forEach(botao => {
       botao.addEventListener('click', () => {
@@ -1654,23 +1744,13 @@ const TelaRecibos = (function () {
     }));
   }
 
-  /**
-   * Payload de nota_liquidacao pra uma linha multi-OB (sessão 2026-08-12), a
-   * partir de div._notaLiquidacao/div._notaLiquidacaoOriginalUrl - mesmo
-   * espírito de montarPayloadOrdensBancarias_ acima, mas pra um item único
-   * (não uma lista): sem LE nenhuma anexada nunca manda nada; LE removida
-   * (havia uma salva, div._notaLiquidacao virou null) manda
-   * removerNotaLiquidacaoArquivo pro backend desanexar (mecanismo que já
-   * existia, usado até agora pelo link "Remover anexo" do <input
-   * type="file"> antigo - ver ligarAnexoComOcr_); LE nova (ainda não
-   * salva, tem _base64) manda os campos de upload de sempre.
-   */
+  /** Payload das LEs da parcela (notas_liquidacao, a partir de div._notasLiquidacao). */
   function montarPayloadNotaLiquidacao_(div) {
-    const le = div._notaLiquidacao;
-    const payload = { nota_liquidacao_numero: le ? le.numero : '' };
-    if (!le && div._notaLiquidacaoOriginalUrl) payload.removerNotaLiquidacaoArquivo = true;
-    if (le && le._base64) Object.assign(payload, { notaLiquidacaoArquivoBase64: le._base64, notaLiquidacaoArquivoNome: le._nome, notaLiquidacaoArquivoTipo: le._tipo });
-    return payload;
+    // Várias LEs por parcela (2026-11-25): a lista inteira. Parcela antiga sem LE nenhuma e que não
+    // mexeu na lista não manda nada, para guardar o Valor Liquidado que já tinha.
+    const les = div._notasLiquidacao || [];
+    if (!les.length && !div._lesJaMexidas) return {};
+    return { notas_liquidacao: payloadNotasLiquidacao_(les) };
   }
 
   /**
@@ -1689,7 +1769,7 @@ const TelaRecibos = (function () {
     });
   }
 
-  async function salvarReciboNovo(seletorNe) {
+  async function salvarReciboNovo(seletorNe, listaLes) {
     const erroEl = document.getElementById('recErro');
     erroEl.classList.add('oculto');
     // Portao unico dos campos monetarios (UI.validarCamposMoeda, js/app.js):
@@ -1746,9 +1826,7 @@ const TelaRecibos = (function () {
       } else {
         dadosBase.valor_liquidado = UI.parseValorBr(document.getElementById('recValorLiquidado').value);
         dadosBase.valor_pago = UI.parseValorBr(document.getElementById('recValorPago').value);
-        dadosBase.nota_liquidacao_numero = document.getElementById('recNotaLiquidacaoArquivo')._numeroDocumentoLido || '';
-        const nl = await lerAnexoDoInput_(document.getElementById('recNotaLiquidacaoArquivo'));
-        if (nl) Object.assign(dadosBase, { notaLiquidacaoArquivoBase64: nl.base64, notaLiquidacaoArquivoNome: nl.nome, notaLiquidacaoArquivoTipo: nl.tipo });
+        dadosBase.notas_liquidacao = listaLes.payload();
         const ob = await lerAnexoDoInput_(document.getElementById('recOrdemBancariaArquivo'));
         if (ob) Object.assign(dadosBase, { ordemBancariaArquivoBase64: ob.base64, ordemBancariaArquivoNome: ob.nome, ordemBancariaArquivoTipo: ob.tipo });
         const criado = await Api.chamar('criarRecibo', { data: dadosBase });
@@ -1898,8 +1976,12 @@ const TelaRecibos = (function () {
         </div>
 
         <div id="blocoParcelaUnicaEd" class="grade-2 ${grupoId ? 'oculto' : ''}">
-          <div class="campo"><label>Valor Liquidado</label><input id="recEdValorLiquidado" type="text" inputmode="decimal" class="campo-moeda" value="${recibo.valor_liquidado}" readonly placeholder="Preenchido ao anexar a LE" /></div>
-          <div class="campo"><label>Nota de Liquidação (anexo)</label><input type="file" id="recEdNotaLiquidacaoArquivo" accept=".pdf,image/*" />${recibo.nota_liquidacao_url ? `<p class="ajuda"><a href="${UI.escaparHtml(recibo.nota_liquidacao_url)}" target="_blank" rel="noopener" class="botao">Ver arquivo atual</a></p>` : ''}</div>
+          <div class="campo"><label>Valor Liquidado (soma das LEs)</label><input id="recEdValorLiquidado" type="text" inputmode="decimal" class="campo-moeda" value="${recibo.valor_liquidado}" readonly placeholder="Preenchido ao anexar a LE" /></div>
+          <div class="campo"><label>Notas de Liquidação</label>
+            <div id="recEdLesLista"></div>
+            <input type="file" id="recEdNotaLiquidacaoArquivo" class="oculto" accept=".pdf,image/*" multiple />
+            <button type="button" class="botao" id="recEdAddLe">+ Adicionar LE</button>
+          </div>
           <div class="campo"><label>Valor Pago</label><input id="recEdValorPago" type="text" inputmode="decimal" class="campo-moeda" value="${recibo.valor_pago}" /></div>
           <div class="campo"><label>Ordem Bancária (anexo)</label><input type="file" id="recEdOrdemBancariaArquivo" accept=".pdf,image/*" />${recibo.ordem_bancaria_arquivo_url ? `<p class="ajuda"><a href="${UI.escaparHtml(recibo.ordem_bancaria_arquivo_url)}" target="_blank" rel="noopener" class="botao">Ver arquivo atual</a></p>` : ''}</div>
         </div>
@@ -1954,13 +2036,14 @@ const TelaRecibos = (function () {
       obterCompetencia: () => document.getElementById('recEdCompetencia').value.trim()
     };
     const obterNotaEmpenhoEd_ = ctxEd.obterNotaEmpenho;
-    const anexoNl = ligarAnexoComOcr_({
-      inputEl: document.getElementById('recEdNotaLiquidacaoArquivo'), tipo: 'nota_liquidacao',
-      obterNotaEmpenho: obterNotaEmpenhoEd_, valorInputEl: document.getElementById('recEdValorLiquidado'),
-      conferirLeitura: resultado => confirmarLeituraLe_(resultado, ctxEd), valorSempreTravado: true,
-      obterCompetencia: ctxEd.obterCompetencia
+    // Várias LEs por recibo (2026-11-25): a lista começa com as que o recibo já tem. Recibo antigo com
+    // Valor Liquidado digitado e sem LE anexada mantém o valor até a primeira LE entrar.
+    const lesIniciaisEd = notasLiquidacaoIniciais_(recibo);
+    const listaLesEd = ligarListaLesAvulso_({
+      listaEl: document.getElementById('recEdLesLista'), inputEl: document.getElementById('recEdNotaLiquidacaoArquivo'),
+      botaoEl: document.getElementById('recEdAddLe'), valorInputEl: document.getElementById('recEdValorLiquidado'), ctx: ctxEd, itens: lesIniciaisEd
     });
-    if (recibo.nota_liquidacao_url) anexoNl.travar(recibo.valor_liquidado, true, recibo.nota_liquidacao_numero);
+    if (!lesIniciaisEd.length && Number(recibo.valor_liquidado)) document.getElementById('recEdValorLiquidado').value = recibo.valor_liquidado;
     const anexoOb = ligarAnexoComOcr_({
       inputEl: document.getElementById('recEdOrdemBancariaArquivo'), tipo: 'ordem_bancaria',
       obterNotaEmpenho: obterNotaEmpenhoEd_, valorInputEl: document.getElementById('recEdValorPago'),
@@ -1998,6 +2081,7 @@ const TelaRecibos = (function () {
             id: recibo.id, percentual_parcela_dividida: PARCELA_DIVIDIDA_TES_PERCENTUAL_MULTI_OB,
             valor_liquidado: recibo.valor_liquidado, valor_pago: recibo.valor_pago,
             nota_liquidacao_url: recibo.nota_liquidacao_url, nota_liquidacao_numero: recibo.nota_liquidacao_numero,
+            notas_liquidacao: listaLesEd.itens(),
             ordem_bancaria_arquivo_url: recibo.ordem_bancaria_arquivo_url, ordem_bancaria_arquivo_drive_id: recibo.ordem_bancaria_arquivo_drive_id
           }
         });
@@ -2006,7 +2090,7 @@ const TelaRecibos = (function () {
     document.getElementById('btnAddParcelaDivididaEd').addEventListener('click', () => adicionarLinhaParcelaDividida_('linhasParcelaDivididaEd', ctxEd));
 
     document.getElementById('btnCancelarRecEd').addEventListener('click', UI.fecharModal);
-    document.getElementById('btnSalvarRecEd').addEventListener('click', () => salvarReciboEdicao(recibo, seletorNe));
+    document.getElementById('btnSalvarRecEd').addEventListener('click', () => salvarReciboEdicao(recibo, seletorNe, listaLesEd, lesIniciaisEd.length));
   }
 
   /**
@@ -2027,7 +2111,7 @@ const TelaRecibos = (function () {
     });
   }
 
-  async function salvarReciboEdicao(recibo, seletorNe) {
+  async function salvarReciboEdicao(recibo, seletorNe, listaLes, qtdLesIniciais) {
     // Nada mudou (sessão 2026-08-13, pedido do usuário): só fecha o card em
     // vez de validar + chamar o backend à toa - mesmo dirty-tracking que já
     // decidia minimizar x fechar no clique fora (ver UI.modalFoiEditado, js/app.js).
@@ -2089,25 +2173,20 @@ const TelaRecibos = (function () {
           // TODA linha (sessão 2026-08-13, unificado - antes só a de maior
           // percentual) - ver montarPayloadNotaLiquidacao_/
           // montarPayloadOrdensBancarias_, não há mais <input type="file">
-          // pra reler aqui (nem a flag dataset.removerExistente - vira
-          // removerNotaLiquidacaoArquivo direto quando div._notaLiquidacao é
-          // null mas já existia uma LE salva).
+          // pra reler aqui.
           Object.assign(parcela, montarPayloadNotaLiquidacao_(div));
           parcela.ordens_bancarias = montarPayloadOrdensBancarias_(div);
           return parcela;
         }));
         respostaSalvar = await Api.chamar('atualizarParcelasDivididasRecibo', { id: recibo.id, dadosBase: dados, parcelas });
       } else {
-        const inputNl = document.getElementById('recEdNotaLiquidacaoArquivo');
         const inputOb = document.getElementById('recEdOrdemBancariaArquivo');
-        dados.valor_liquidado = UI.parseValorBr(document.getElementById('recEdValorLiquidado').value);
         dados.valor_pago = UI.parseValorBr(document.getElementById('recEdValorPago').value);
-        dados.nota_liquidacao_numero = inputNl._numeroDocumentoLido || '';
-        if (inputNl.dataset.removerExistente === '1') dados.removerNotaLiquidacaoArquivo = true;
+        // A lista de LEs só vai quando há LE (ou havia): recibo antigo sem LE anexada guarda o
+        // Valor Liquidado que já tinha.
+        if (listaLes.itens().length || qtdLesIniciais) dados.notas_liquidacao = listaLes.payload();
         if (inputOb.dataset.removerExistente === '1') dados.removerOrdemBancariaArquivo = true;
 
-        const nl = await lerAnexoDoInput_(inputNl);
-        if (nl) Object.assign(dados, { notaLiquidacaoArquivoBase64: nl.base64, notaLiquidacaoArquivoNome: nl.nome, notaLiquidacaoArquivoTipo: nl.tipo });
         const ob = await lerAnexoDoInput_(inputOb);
         if (ob) Object.assign(dados, { ordemBancariaArquivoBase64: ob.base64, ordemBancariaArquivoNome: ob.nome, ordemBancariaArquivoTipo: ob.tipo });
 
