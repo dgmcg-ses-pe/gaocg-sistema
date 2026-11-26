@@ -289,7 +289,7 @@ html[data-tema="novo"] .filtro-multiplo.tem-selecao .filtro-multiplo-cabecalho {
 html[data-tema="novo"] .filtro-multiplo-painel { background: var(--superficie); border-color: var(--cinza-300); box-shadow: var(--sombra-forte); }
 html[data-tema="novo"] .filtro-multiplo-opcao:hover { background: var(--superficie-2); }
 html[data-tema="novo"] .linhas-fonte, html[data-tema="novo"] .linha-fonte, html[data-tema="novo"] .linha-fonte-cronograma,
-html[data-tema="novo"] .linha-ta, html[data-tema="novo"] .linha-parcela-dividida { background: var(--superficie-2); }
+html[data-tema="novo"] .linha-ta, html[data-tema="novo"] .linha-parcela-dividida, html[data-tema="novo"] .outras-nes-lista { background: var(--superficie-2); }
 html[data-tema="novo"] .linha-fonte-total-exibicao { background: var(--superficie); border-color: var(--cinza-200); color: var(--cinza-900); }
 html[data-tema="novo"] .linha-fonte-total-atendido-exibicao { background: var(--verde-claro); color: var(--verde); border-color: var(--verde-claro); }
 html[data-tema="novo"] .linha-fonte-mes-campo.mes-atendido input { background: var(--verde-claro); border-color: var(--verde); color: var(--verde); }

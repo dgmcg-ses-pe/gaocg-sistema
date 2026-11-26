@@ -1054,7 +1054,7 @@ const TelaRecibos = (function () {
    * (opcional) é chamado toda vez que o anexo é lido ou removido, pra quem
    * precisa reagir (ex.: essa mesma tabela, quando a LE muda).
    */
-  function ligarAnexoComOcr_({ inputEl, tipo, obterNotaEmpenho, valorInputEl, aoAtualizar, conferirLeitura, valorSempreTravado, obterCompetencia }) {
+  function ligarAnexoComOcr_({ inputEl, tipo, obterNotaEmpenho, valorInputEl, aoAtualizar, conferirLeitura, valorSempreTravado, obterCompetencia, obterOutrasNes }) {
     const statusEl = document.createElement('p');
     statusEl.className = 'ajuda anexo-ocr-status oculto';
     inputEl.insertAdjacentElement('afterend', statusEl);
@@ -1097,6 +1097,7 @@ const TelaRecibos = (function () {
         const base64 = await UI.lerArquivoBase64(arquivo);
         const resultado = await Api.chamar('lerAnexoRecibo', {
           tipo, arquivoBase64: base64, arquivoNome: arquivo.name, arquivoTipo: arquivo.type, notaEmpenhoEsperada: notaEmpenho,
+          outrasNotasEmpenho: obterOutrasNes ? obterOutrasNes().join(', ') : '',
           competenciaEsperada: obterCompetencia ? obterCompetencia() : ''
         });
         if (conferirLeitura && !conferirLeitura(resultado)) { inputEl.value = ''; return; }
@@ -1207,10 +1208,10 @@ const TelaRecibos = (function () {
   function notasLiquidacaoIniciais_(d) {
     if (!d) return [];
     if (Array.isArray(d.notas_liquidacao)) {
-      return d.notas_liquidacao.map(n => ({ numero_le: n.numero_le || '', valor: Number(n.valor) || 0, arquivo_drive_id: n.arquivo_drive_id || '', arquivo_url: n.arquivo_url || '' }));
+      return d.notas_liquidacao.map(n => ({ numero_le: n.numero_le || '', valor: Number(n.valor) || 0, arquivo_drive_id: n.arquivo_drive_id || '', arquivo_url: n.arquivo_url || '', numero_ne: n.numero_ne || '' }));
     }
     if (d.nota_liquidacao_url || d.nota_liquidacao_numero) {
-      return [{ numero_le: d.nota_liquidacao_numero || '', valor: Number(d.valor_liquidado) || 0, arquivo_drive_id: d.nota_liquidacao_drive_id || '', arquivo_url: d.nota_liquidacao_url || '' }];
+      return [{ numero_le: d.nota_liquidacao_numero || '', valor: Number(d.valor_liquidado) || 0, arquivo_drive_id: d.nota_liquidacao_drive_id || '', arquivo_url: d.nota_liquidacao_url || '', numero_ne: d.nota_empenho || '' }];
     }
     return [];
   }
@@ -1220,7 +1221,7 @@ const TelaRecibos = (function () {
   function payloadNotasLiquidacao_(itens) {
     return (itens || []).map(it => ({
       numero_le: it.numero_le || '', valor: it.valor, arquivo_drive_id: it.arquivo_drive_id || '', arquivo_url: it.arquivo_url || '',
-      arquivoBase64: it._base64, arquivoNome: it._nome, arquivoTipo: it._tipo
+      numero_ne: it.numero_ne || '', arquivoBase64: it._base64, arquivoNome: it._nome, arquivoTipo: it._tipo
     }));
   }
 
@@ -1235,7 +1236,7 @@ const TelaRecibos = (function () {
       const base64 = await UI.lerArquivoBase64(arquivo);
       const resultado = await Api.chamar('lerAnexoRecibo', {
         tipo: 'nota_liquidacao', arquivoBase64: base64, arquivoNome: arquivo.name, arquivoTipo: arquivo.type, notaEmpenhoEsperada: notaEmpenho,
-        competenciaEsperada: ctx.obterCompetencia()
+        outrasNotasEmpenho: outrasNesDoCtx_(ctx).join(', '), competenciaEsperada: ctx.obterCompetencia()
       });
       if (resultado.numero_documento && jaNaTela.has(resultado.numero_documento)) {
         UI.toast(prefixo + 'A Nota de Liquidação nº ' + resultado.numero_documento + ' já foi anexada a este processo.', 'erro');
@@ -1243,11 +1244,18 @@ const TelaRecibos = (function () {
       }
       const comSoma = Object.assign({}, resultado, { valor: (Number(somaAtual) || 0) + (Number(resultado.valor) || 0) });
       if (!confirmarLeituraLe_(comSoma, ctx, percentual)) return null;
-      return { numero_le: resultado.numero_documento || '', valor: Number(resultado.valor) || 0, _base64: base64, _nome: arquivo.name, _tipo: arquivo.type };
+      return { numero_le: resultado.numero_documento || '', valor: Number(resultado.valor) || 0, numero_ne: resultado.numero_ne || '',
+        _base64: base64, _nome: arquivo.name, _tipo: arquivo.type };
     } catch (err) {
       UI.toast(prefixo + err.message, 'erro');
       return null;
     }
+  }
+
+  /** Redesenha as tabelas de LEs (avulsa e das parcelas) quando as NEs do recibo mudam. */
+  function redesenharTabelasLes_(listaAvulsa, containerParcelas) {
+    if (listaAvulsa) listaAvulsa.render();
+    document.querySelectorAll('#' + containerParcelas + ' .linha-parcela-dividida').forEach(div => renderTabelaOrdensBancariasParcela_(div));
   }
 
   /** Lê vários arquivos de LE, um por vez, e chama aoAdicionar(item) para cada um aceito. */
@@ -1272,6 +1280,126 @@ const TelaRecibos = (function () {
     if (varios) UI.toast(`${anexadas} de ${arquivos.length} Notas de Liquidação adicionadas. Clique em Salvar para gravar.`, anexadas ? 'sucesso' : 'erro');
   }
 
+  /* ============ Pagamento com mais de uma NE (2026-11-26, pedido do usuário) ============
+   * Contrato que termina no meio do mês: a parcela é paga com duas (ou mais) NEs, uma liquidação
+   * por NE. A caixa "Este pagamento é feito com mais de uma NE?" (abaixo da Nota de Empenho) abre
+   * a 2ª NE e "+ Outra NE". A NE do campo continua sendo a principal; as outras vão em
+   * outras_notas_empenho. A LE lida aceita qualquer NE do recibo e guarda a dela (numero_ne),
+   * mostrada na coluna NE das tabelas de LEs, com o subtotal por NE. */
+
+  const outrasNesDoCtx_ = ctx => (ctx && ctx.obterOutrasNes ? ctx.obterOutrasNes() : []);
+
+  /** Coluna NE das tabelas de LEs: só quando o recibo tem mais de uma NE. */
+  function mostraColunaNe_(ctx) { return outrasNesDoCtx_(ctx).length > 0; }
+
+  /** "Por NE: 2026NE001 R$ 10,00 · 2026NE002 R$ 5,00" abaixo da tabela, quando há mais de uma NE. */
+  function subtotalPorNeHtml_(les, ctx) {
+    if (!mostraColunaNe_(ctx) || !(les || []).length) return '';
+    const soma = {};
+    les.forEach(le => { const ne = le.numero_ne || 'sem NE'; soma[ne] = (soma[ne] || 0) + (Number(le.valor) || 0); });
+    return '<p class="ajuda">Liquidado por NE: ' + Object.keys(soma).map(ne => `<strong>${UI.escaparHtml(ne)}</strong> ${UI.formatarMoeda(soma[ne])}`).join(' · ') + '</p>';
+  }
+
+  /** Mensagem se alguma LE é de uma NE que não está no recibo (ex.: a 2ª NE foi tirada depois). */
+  function erroNesDasLes_(listas, principal, outras) {
+    const nes = [principal].concat(outras || []).map(n => String(n || '').trim().toUpperCase()).filter(Boolean);
+    if (!nes.length) return '';
+    for (const lista of listas) {
+      const fora = (lista || []).find(le => le.numero_ne && nes.indexOf(String(le.numero_ne).toUpperCase()) === -1);
+      if (fora) return `A Nota de Liquidação ${fora.numero_le || ''} é da NE ${fora.numero_ne}, que não está entre as NEs do recibo (${nes.join(', ')}). Marque "Este pagamento é feito com mais de uma NE?" e inclua essa NE, ou remova a LE.`;
+    }
+    return '';
+  }
+
+  /**
+   * Caixa + lista das NEs além da principal. As opções são as mesmas do campo Nota de Empenho
+   * (NEs do objeto), sem a principal. `iniciais` = outras NEs já salvas (edição). `aoMudar` é
+   * chamado quando a lista muda (para redesenhar as tabelas de LEs). Devolve { valores(), validar() }.
+   */
+  function criarOutrasNes_({ campoEl, selectPrincipalEl, objetoEl, iniciais, aoMudar }) {
+    const prefixo = 'outrasNe' + (++contadorOutrasNes_);
+    campoEl.insertAdjacentHTML('beforeend', `
+      <div class="outras-nes oculto" id="${prefixo}Bloco">
+        <label class="rotulo-checkbox"><input type="checkbox" id="${prefixo}Check" /> Este pagamento é feito com mais de uma NE?</label>
+        <div id="${prefixo}Lista" class="outras-nes-lista oculto"></div>
+      </div>`);
+    const blocoEl = document.getElementById(prefixo + 'Bloco');
+    const checkEl = document.getElementById(prefixo + 'Check');
+    const listaEl = document.getElementById(prefixo + 'Lista');
+    let valores = (iniciais || []).slice();
+    if (!valores.length) valores = [''];
+    checkEl.checked = (iniciais || []).length > 0;
+    const salvas = (iniciais || []).map(n => String(n).toUpperCase());
+
+    function opcoes_() {
+      const principal = selectPrincipalEl.value;
+      const lista = Array.from(selectPrincipalEl.options).filter(o => o.value && o.value !== principal)
+        .map(o => ({ valor: o.value, texto: o.textContent }));
+      // NE salva que saiu da lista do objeto: continua como opção, como na NE principal.
+      salvas.forEach(ne => { if (ne !== principal && !lista.some(o => o.valor.toUpperCase() === ne)) lista.push({ valor: ne, texto: ne + ' (fora da lista)' }); });
+      return lista;
+    }
+
+    function render() {
+      const temPrincipal = !!selectPrincipalEl.value;
+      blocoEl.classList.toggle('oculto', !temPrincipal && !checkEl.checked);
+      listaEl.classList.toggle('oculto', !checkEl.checked);
+      const opcoes = opcoes_();
+      listaEl.innerHTML = valores.map((v, i) => `
+        <div class="outras-nes-linha">
+          <label>${i + 2}ª Nota de Empenho</label>
+          <div class="outras-nes-controle">
+            <select data-indice-ne="${i}">
+              <option value="">${opcoes.length ? 'Selecione a NE...' : 'Nenhuma outra NE cadastrada para este objeto'}</option>
+              ${opcoes.map(o => `<option value="${UI.escaparHtml(o.valor)}" ${o.valor === v ? 'selected' : ''}>${UI.escaparHtml(o.texto)}</option>`).join('')}
+            </select>
+            ${valores.length > 1 ? `<button type="button" class="botao-icone excluir" data-remover-ne="${i}" title="Tirar esta NE">${ICONE_LIXEIRA}</button>` : ''}
+          </div>
+        </div>`).join('') + '<button type="button" class="botao" data-add-ne>+ Outra NE</button>';
+      listaEl.querySelectorAll('[data-indice-ne]').forEach(sel => sel.addEventListener('change', () => {
+        valores[Number(sel.dataset.indiceNe)] = sel.value;
+        if (aoMudar) aoMudar();
+      }));
+      listaEl.querySelectorAll('[data-remover-ne]').forEach(b => b.addEventListener('click', () => {
+        valores.splice(Number(b.dataset.removerNe), 1);
+        render();
+        if (aoMudar) aoMudar();
+      }));
+      listaEl.querySelector('[data-add-ne]').addEventListener('click', () => { valores.push(''); render(); });
+    }
+
+    function lista() {
+      if (!checkEl.checked || !selectPrincipalEl.value) return [];
+      const principal = selectPrincipalEl.value.toUpperCase();
+      const vistos = {};
+      return valores.map(v => String(v || '').trim().toUpperCase())
+        .filter(v => { if (!v || v === principal || vistos[v]) return false; vistos[v] = true; return true; });
+    }
+
+    function validar() {
+      if (!checkEl.checked) return '';
+      if (!selectPrincipalEl.value) return 'Escolha a Nota de Empenho principal antes das outras NEs.';
+      if (!lista().length) return 'Escolha a 2ª Nota de Empenho ou desmarque "Este pagamento é feito com mais de uma NE?".';
+      const escolhidas = valores.filter(Boolean).map(v => v.toUpperCase());
+      if (escolhidas.length !== new Set(escolhidas).size) return 'A mesma NE foi escolhida duas vezes.';
+      return '';
+    }
+
+    checkEl.addEventListener('change', () => { render(); if (aoMudar) aoMudar(); });
+    // A troca da NE principal ou do objeto muda as opções; a NE extra que deixou de existir sai da lista.
+    const aoTrocarBase = () => {
+      const validas = opcoes_().map(o => o.valor);
+      valores = valores.map(v => (validas.indexOf(v) === -1 ? '' : v));
+      render();
+      if (aoMudar) aoMudar();
+    };
+    selectPrincipalEl.addEventListener('change', aoTrocarBase);
+    if (objetoEl) objetoEl.addEventListener('change', aoTrocarBase);
+    render();
+    return { valores: lista, validar, atualizar: aoTrocarBase };
+  }
+  let contadorOutrasNes_ = 0;
+
   /**
    * Lista de LEs do recibo avulso (novo e edição): tabela + "+ Adicionar LE" (aceita vários
    * arquivos). Valor Liquidado = soma, somente leitura. Devolve { itens(), payload() }.
@@ -1280,21 +1408,23 @@ const TelaRecibos = (function () {
     const estado = (itens || []).slice();
     valorInputEl.readOnly = true;
     function render() {
+      const colNe = mostraColunaNe_(ctx);
       listaEl.innerHTML = estado.length ? `
         <div class="tabela-reforcos-wrap">
-          <table class="tabela tabela-reforcos">
-            <thead><tr><th>LE</th><th>Valor</th><th>Arquivo</th><th></th></tr></thead>
+          <table class="tabela tabela-reforcos${colNe ? ' com-ne' : ''}">
+            <thead><tr><th>LE</th>${colNe ? '<th>NE</th>' : ''}<th>Valor</th><th>Arquivo</th><th></th></tr></thead>
             <tbody>
               ${estado.map((it, i) => `
                 <tr>
                   <td>${it.numero_le ? UI.escaparHtml(it.numero_le) : '<span class="ajuda">-</span>'}</td>
+                  ${colNe ? `<td>${it.numero_ne ? UI.escaparHtml(it.numero_ne) : '<span class="ajuda">-</span>'}</td>` : ''}
                   <td>${UI.formatarMoeda(it.valor)}</td>
                   <td>${it.arquivo_url ? `<a href="${UI.escaparHtml(it.arquivo_url)}" target="_blank" rel="noopener" class="botao">Ver</a>` : (it._base64 ? '<span class="ajuda">novo</span>' : '<span class="ajuda">-</span>')}</td>
                   <td><button type="button" class="botao-icone excluir" data-indice-le="${i}" title="Remover esta LE">${ICONE_LIXEIRA}</button></td>
                 </tr>`).join('')}
             </tbody>
           </table>
-        </div>` : '<p class="ajuda">Nenhuma Nota de Liquidação anexada.</p>';
+        </div>${subtotalPorNeHtml_(estado, ctx)}` : '<p class="ajuda">Nenhuma Nota de Liquidação anexada.</p>';
       listaEl.querySelectorAll('[data-indice-le]').forEach(botao => {
         botao.addEventListener('click', () => {
           if (!confirm('Apagar esta Nota de Liquidação?')) return;
@@ -1314,7 +1444,7 @@ const TelaRecibos = (function () {
         item => { estado.push(item); render(); });
     });
     render();
-    return { itens: () => estado, payload: () => payloadNotasLiquidacao_(estado) };
+    return { itens: () => estado, payload: () => payloadNotasLiquidacao_(estado), render };
   }
 
   // ===================== NOVO RECIBO (com ou sem parcela dividida) =====================
@@ -1421,6 +1551,7 @@ const TelaRecibos = (function () {
         historicoRecibosUnidade = resposta.items.slice().sort((a, b) => b.data_criacao < a.data_criacao ? -1 : 1);
         objetosSofDaUnidadeNovo = objetosSof;
         seletorNe.definirCarga('pronto', nes);
+        outrasNesNovo.atualizar();
         // Objeto escolhido enquanto as NEs carregavam: aplica agora o autopreenchimento dele.
         if (objetoEl.value) objetoEl.dispatchEvent(new Event('change', { bubbles: true }));
       } catch (err) {
@@ -1466,6 +1597,13 @@ const TelaRecibos = (function () {
       competenciaId: 'recCompetencia', parcelaContratualId: 'recParcelaContratual',
       obterCompetencia: () => document.getElementById('recCompetencia').value.trim()
     };
+    let listaLesNovo = null;
+    const outrasNesNovo = criarOutrasNes_({
+      campoEl: document.getElementById('recNotaEmpenho').closest('.campo'), selectPrincipalEl: document.getElementById('recNotaEmpenho'),
+      objetoEl: document.getElementById('recObjeto'), iniciais: [],
+      aoMudar: () => redesenharTabelasLes_(listaLesNovo, 'linhasParcelaDividida')
+    });
+    ctxNovo.obterOutrasNes = outrasNesNovo.valores;
     const obterNotaEmpenhoNovo_ = ctxNovo.obterNotaEmpenho;
     document.getElementById('recTemParcelaDividida').addEventListener('change', function () {
       document.getElementById('blocoParcelaUnica').classList.toggle('oculto', this.checked);
@@ -1475,16 +1613,16 @@ const TelaRecibos = (function () {
       }
     });
     document.getElementById('btnCancelarRec').addEventListener('click', UI.fecharModal);
-    const listaLesNovo = ligarListaLesAvulso_({
+    listaLesNovo = ligarListaLesAvulso_({
       listaEl: document.getElementById('recLesLista'), inputEl: document.getElementById('recNotaLiquidacaoArquivo'),
       botaoEl: document.getElementById('recAddLe'), valorInputEl: document.getElementById('recValorLiquidado'), ctx: ctxNovo, itens: []
     });
-    document.getElementById('btnSalvarRec').addEventListener('click', () => salvarReciboNovo(seletorNe, listaLesNovo));
+    document.getElementById('btnSalvarRec').addEventListener('click', () => salvarReciboNovo(seletorNe, listaLesNovo, outrasNesNovo));
     ligarAnexoComOcr_({
       inputEl: document.getElementById('recOrdemBancariaArquivo'), tipo: 'ordem_bancaria',
       obterNotaEmpenho: obterNotaEmpenhoNovo_, valorInputEl: document.getElementById('recValorPago'),
       conferirLeitura: resultado => confirmarLeituraOb_(resultado, ctxNovo),
-      obterCompetencia: ctxNovo.obterCompetencia
+      obterCompetencia: ctxNovo.obterCompetencia, obterOutrasNes: ctxNovo.obterOutrasNes
     });
   }
 
@@ -1579,6 +1717,7 @@ const TelaRecibos = (function () {
 
     // Várias LEs por parcela (2026-11-25): a lista inteira vai a cada Salvar (montarPayloadNotaLiquidacao_).
     div._notasLiquidacao = notasLiquidacaoIniciais_(dadosExistentes);
+    div._ctx = ctx;
 
     div._ordensBancarias = ((dadosExistentes && dadosExistentes.ordens_bancarias) || []).map(it => ({
       numero_ob: it.numero_ob || '', valor: Number(it.valor) || 0,
@@ -1636,7 +1775,7 @@ const TelaRecibos = (function () {
             const base64 = await UI.lerArquivoBase64(arquivo);
             const resultado = await Api.chamar('lerAnexoRecibo', {
               tipo: 'ordem_bancaria', arquivoBase64: base64, arquivoNome: arquivo.name, arquivoTipo: arquivo.type, notaEmpenhoEsperada: notaEmpenho,
-              competenciaEsperada: ctx.obterCompetencia()
+              outrasNotasEmpenho: outrasNesDoCtx_(ctx).join(', '), competenciaEsperada: ctx.obterCompetencia()
             });
             if (resultado.numero_documento && numerosDocumentosAnexadosNaTela_(containerId).numerosOb.has(resultado.numero_documento)) {
               UI.toast(prefixo + 'A Ordem Bancária nº ' + resultado.numero_documento + ' já foi anexada a este processo.', 'erro');
@@ -1678,15 +1817,17 @@ const TelaRecibos = (function () {
     // Valor Liquidado = soma das LEs; parcela antiga com valor digitado e sem LE mantém o valor.
     if (les.length || div._lesJaMexidas) div.querySelector('.pd-liquidado').value = somaLes ? somaLes.toFixed(2) : '';
     const alvo = div.querySelector('.pd-ob-tabela-wrap');
+    const colNe = mostraColunaNe_(div._ctx);
     alvo.innerHTML = `
       <div class="tabela-reforcos-wrap">
-        <table class="tabela tabela-reforcos">
-          <thead><tr><th>Documento</th><th>Número</th><th>Valor</th><th>Arquivo</th><th></th></tr></thead>
+        <table class="tabela tabela-reforcos${colNe ? ' com-ne' : ''}">
+          <thead><tr><th>Documento</th><th>Número</th>${colNe ? '<th>NE</th>' : ''}<th>Valor</th><th>Arquivo</th><th></th></tr></thead>
           <tbody>
             ${les.map((le, i) => `
             <tr>
               <td>LE</td>
               <td>${le.numero_le ? UI.escaparHtml(le.numero_le) : '<span class="ajuda">-</span>'}</td>
+              ${colNe ? `<td>${le.numero_ne ? UI.escaparHtml(le.numero_ne) : '<span class="ajuda">-</span>'}</td>` : ''}
               <td>${UI.formatarMoeda(le.valor)}</td>
               <td>${le.arquivo_url ? `<a href="${UI.escaparHtml(le.arquivo_url)}" target="_blank" rel="noopener" class="botao">Ver</a>` : (le._base64 ? '<span class="ajuda">novo</span>' : '<span class="ajuda">-</span>')}</td>
               <td><button type="button" class="botao-icone excluir" data-indice-le="${i}" title="Remover esta LE">${ICONE_LIXEIRA}</button></td>
@@ -1695,6 +1836,7 @@ const TelaRecibos = (function () {
               <tr>
                 <td>OB</td>
                 <td>${it.numero_ob ? UI.escaparHtml(it.numero_ob) : '<span class="ajuda">-</span>'}</td>
+                ${colNe ? '<td><span class="ajuda">-</span></td>' : ''}
                 <td>${UI.formatarMoeda(it.valor)}</td>
                 <td>${it.arquivo_url ? `<a href="${UI.escaparHtml(it.arquivo_url)}" target="_blank" rel="noopener" class="botao">Ver</a>` : '<span class="ajuda">-</span>'}</td>
                 <td><button type="button" class="botao-icone excluir" data-indice-ob="${i}" title="Remover esta OB">${ICONE_LIXEIRA}</button></td>
@@ -1702,6 +1844,7 @@ const TelaRecibos = (function () {
           </tbody>
         </table>
       </div>
+      ${subtotalPorNeHtml_(les, div._ctx)}
       ${(les.length || itens.length) ? '' : '<p class="ajuda">Nenhum documento anexado ainda.</p>'}`;
     // Confirmação antes de apagar (sessão 2026-08-14, pedido do usuário) -
     // remove só do estado local aqui (instantâneo, sem chamada de rede) - a
@@ -1769,7 +1912,7 @@ const TelaRecibos = (function () {
     });
   }
 
-  async function salvarReciboNovo(seletorNe, listaLes) {
+  async function salvarReciboNovo(seletorNe, listaLes, outrasNes) {
     const erroEl = document.getElementById('recErro');
     erroEl.classList.add('oculto');
     // Portao unico dos campos monetarios (UI.validarCamposMoeda, js/app.js):
@@ -1777,11 +1920,17 @@ const TelaRecibos = (function () {
     if (!UI.validarCamposMoeda()) return;
     const unidadeId = document.getElementById('recUnidade').value;
     if (!unidadeId) { UI.mostrarErro(erroEl, 'Selecione a unidade.'); return; }
-    const erroNe = seletorNe.validar();
+    const erroNe = seletorNe.validar() || outrasNes.validar();
     if (erroNe) { UI.mostrarErro(erroEl, erroNe); return; }
+    const dividido = document.getElementById('recTemParcelaDividida').checked;
+    const erroLes = erroNesDasLes_(dividido
+      ? Array.from(document.querySelectorAll('#linhasParcelaDividida .linha-parcela-dividida')).map(div => div._notasLiquidacao)
+      : [listaLes.itens()], document.getElementById('recNotaEmpenho').value, outrasNes.valores());
+    if (erroLes) { UI.mostrarErro(erroEl, erroLes); return; }
 
     const dadosBase = {
       unidade_id: unidadeId,
+      outras_notas_empenho: outrasNes.valores().join(', '),
       oss_snapshot: document.getElementById('recOss').value.trim(),
       cnpj_snapshot: document.getElementById('recCnpj').value.trim(),
       tipo_unidade: document.getElementById('recTipoUnidade').value.trim(),
@@ -2035,11 +2184,19 @@ const TelaRecibos = (function () {
       competenciaId: 'recEdCompetencia', parcelaContratualId: 'recEdParcelaContratual',
       obterCompetencia: () => document.getElementById('recEdCompetencia').value.trim()
     };
+    let listaLesEd = null;
+    const outrasNesEd = criarOutrasNes_({
+      campoEl: document.getElementById('recEdNotaEmpenho').closest('.campo'), selectPrincipalEl: document.getElementById('recEdNotaEmpenho'),
+      objetoEl: document.getElementById('recEdObjeto'),
+      iniciais: String(recibo.outras_notas_empenho || '').split(/[,;\s]+/).filter(Boolean),
+      aoMudar: () => redesenharTabelasLes_(listaLesEd, 'linhasParcelaDivididaEd')
+    });
+    ctxEd.obterOutrasNes = outrasNesEd.valores;
     const obterNotaEmpenhoEd_ = ctxEd.obterNotaEmpenho;
     // Várias LEs por recibo (2026-11-25): a lista começa com as que o recibo já tem. Recibo antigo com
     // Valor Liquidado digitado e sem LE anexada mantém o valor até a primeira LE entrar.
     const lesIniciaisEd = notasLiquidacaoIniciais_(recibo);
-    const listaLesEd = ligarListaLesAvulso_({
+    listaLesEd = ligarListaLesAvulso_({
       listaEl: document.getElementById('recEdLesLista'), inputEl: document.getElementById('recEdNotaLiquidacaoArquivo'),
       botaoEl: document.getElementById('recEdAddLe'), valorInputEl: document.getElementById('recEdValorLiquidado'), ctx: ctxEd, itens: lesIniciaisEd
     });
@@ -2048,7 +2205,7 @@ const TelaRecibos = (function () {
       inputEl: document.getElementById('recEdOrdemBancariaArquivo'), tipo: 'ordem_bancaria',
       obterNotaEmpenho: obterNotaEmpenhoEd_, valorInputEl: document.getElementById('recEdValorPago'),
       conferirLeitura: resultado => confirmarLeituraOb_(resultado, ctxEd),
-      obterCompetencia: ctxEd.obterCompetencia
+      obterCompetencia: ctxEd.obterCompetencia, obterOutrasNes: ctxEd.obterOutrasNes
     });
     if (recibo.ordem_bancaria_arquivo_url) anexoOb.travar(recibo.valor_pago, true);
 
@@ -2090,7 +2247,7 @@ const TelaRecibos = (function () {
     document.getElementById('btnAddParcelaDivididaEd').addEventListener('click', () => adicionarLinhaParcelaDividida_('linhasParcelaDivididaEd', ctxEd));
 
     document.getElementById('btnCancelarRecEd').addEventListener('click', UI.fecharModal);
-    document.getElementById('btnSalvarRecEd').addEventListener('click', () => salvarReciboEdicao(recibo, seletorNe, listaLesEd, lesIniciaisEd.length));
+    document.getElementById('btnSalvarRecEd').addEventListener('click', () => salvarReciboEdicao(recibo, seletorNe, listaLesEd, lesIniciaisEd.length, outrasNesEd));
   }
 
   /**
@@ -2111,7 +2268,7 @@ const TelaRecibos = (function () {
     });
   }
 
-  async function salvarReciboEdicao(recibo, seletorNe, listaLes, qtdLesIniciais) {
+  async function salvarReciboEdicao(recibo, seletorNe, listaLes, qtdLesIniciais, outrasNes) {
     // Nada mudou (sessão 2026-08-13, pedido do usuário): só fecha o card em
     // vez de validar + chamar o backend à toa - mesmo dirty-tracking que já
     // decidia minimizar x fechar no clique fora (ver UI.modalFoiEditado, js/app.js).
@@ -2121,8 +2278,13 @@ const TelaRecibos = (function () {
     // Portao unico dos campos monetarios (UI.validarCamposMoeda, js/app.js):
     // recusa texto que nao vira numero em vez de gravar R$ 0,00 sem avisar.
     if (!UI.validarCamposMoeda()) return;
-    const erroNe = seletorNe.validar();
+    const erroNe = seletorNe.validar() || outrasNes.validar();
     if (erroNe) { UI.mostrarErro(erroEl, erroNe); return; }
+    const divididoEd = document.getElementById('recEdTemParcelaDividida').checked;
+    const erroLes = erroNesDasLes_(divididoEd
+      ? Array.from(document.querySelectorAll('#linhasParcelaDivididaEd .linha-parcela-dividida')).map(div => div._notasLiquidacao)
+      : [listaLes.itens()], document.getElementById('recEdNotaEmpenho').value, outrasNes.valores());
+    if (erroLes) { UI.mostrarErro(erroEl, erroLes); return; }
     // Status de cada linha antes de salvar - o backend pode revê-lo (statusPorPagamento_,
     // Recibos.gs) e avisarStatusRevisto_ conta isso ao usuário.
     const statusAntes = {};
@@ -2138,6 +2300,7 @@ const TelaRecibos = (function () {
       parcela_contratual: UI.parseValorBr(document.getElementById('recEdParcelaContratual').value),
       fonte: document.getElementById('recEdFonte').value,
       nota_empenho: document.getElementById('recEdNotaEmpenho').value.trim(),
+      outras_notas_empenho: outrasNes.valores().join(', '),
       competencia: document.getElementById('recEdCompetencia').value.trim(),
       numero_processo: document.getElementById('recEdNumeroProcesso').value.trim(),
       // ordem_bancaria/status (sessão 2026-08-12): saíram deste formulário -

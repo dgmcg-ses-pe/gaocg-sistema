@@ -1039,3 +1039,12 @@ input.rel-input { min-width: 220px; flex: 1; }
   .fx-area { height: calc(100vh - 330px); min-height: 320px; }
   .fx-barra .fx-barra-espaco { display: none; }
 }
+
+/* Pagamento com mais de uma NE (2026-11-26): caixa e lista de NEs abaixo da Nota de Empenho do Recibo. */
+.outras-nes { margin-top: 6px; }
+.outras-nes-lista { margin-top: 6px; padding: 8px; background: var(--cinza-100); border-radius: 8px; display: flex; flex-direction: column; gap: 6px; }
+.outras-nes-linha label { font-size: 12px; }
+.outras-nes-controle { display: flex; gap: 6px; align-items: center; }
+.outras-nes-controle select { flex: 1; min-width: 0; }
+.outras-nes-lista > .botao { align-self: flex-start; }
+.tabela-reforcos.com-ne th, .tabela-reforcos.com-ne td { white-space: normal; overflow-wrap: anywhere; font-size: 12px; }
