@@ -4630,12 +4630,12 @@ function garantirCartaoReciboSei_() {
     if (doc.getElementById(ID_CARTAO_RECIBO_SEI_)) return;
     arvore.documentos = arvore.documentos
       .map(d => Object.assign(d, { fluxo: fluxoDoDocumentoSei_(d.nome, unidadeNe, d.conteudo) }))
-      // Das pastas recolhidas só entram SOF e NE: LE/OB continuam só das pastas abertas.
-      .filter(d => d.fluxo && !(d.daPasta && d.fluxo === "recibo"));
+      .filter(d => d.fluxo);
     if (arvore.documentos.length) montarCartaoReciboSei_(doc, arvore);
   };
-  // Na SES-GAOCG, SOF e NEs mãe costumam estar em pastas que o SEI só carrega depois (2026-11-24).
-  if (!unidadeNe || !/Pastas\[\d+\]\['link'\]/.test(textoDosScriptsDaArvore_(doc))) { montar(); return; }
+  // Processo grande vem em pastas (I, II...) que o SEI só carrega depois. Lidas em qualquer unidade e
+  // para todos os fluxos (2026-11-26): LE/OB da pasta I ficavam de fora do cartão (Hosp. da Mulher, abr/26).
+  if (!/Pastas\[\d+\]\['link'\]/.test(textoDosScriptsDaArvore_(doc))) { montar(); return; }
   if (leituraPastasEmAndamento_ === doc) return;
   leituraPastasEmAndamento_ = doc;
   documentosDasPastasSei_(doc).then(extras => {
